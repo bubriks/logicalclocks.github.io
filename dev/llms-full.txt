@@ -1839,7 +1839,7 @@ Execute the following command to install the Hopsworks client library in your Py
     pip install "hopsworks[python]"
     ```
 
-Supported versions of Python: 3.10, 3.11, 3.12, 3.13 ([PyPI ↗](https://pypi.org/project/hopsworks/))
+Supported versions of Python: 3.10, 3.11, 3.12, 3.13, 3.14 ([PyPI ↗](https://pypi.org/project/hopsworks/))
 
 ### Profiles
 
@@ -1880,13 +1880,19 @@ It then writes the following files into the current directory:
 | --- | --- |
 | `AGENTS.md` | Instructions for the agent: the project you are connected to, where the `hopsworks` library is installed on this machine, and how to use the `hops` CLI and the skills. |
 | `.claude/skills/hops/SKILL.md` | A reference for the `hops` CLI. |
-| `.claude/commands/hops.md` | The `/hops` slash command for Claude Code. |
-| `.claude/agents/hops-fti.md` | A Claude Code sub-agent that reviews a project against the feature, training and inference pipeline pattern. |
+| `.claude/commands/hops.md` | The `/hops` slash command for Claude Code: a fast menu to explore data, build or edit a Superset dashboard (`/hops dashboard`) or a Python app (`/hops app`), and show status. It runs on Haiku; the building is done by the agents below. |
+| `.claude/commands/hops-ml.md` | The `/hops-ml` slash command: an ML system interview inside Claude Code, on Haiku, recorded in `system.yaml` as you answer. |
+| `.claude/commands/hops-build.md` | The `/hops-build` slash command: completes the specification the interview recorded and builds the ML system to a pull request, on your session's model. |
+| `.claude/agents/hops-dashboard-builder.md` | The Claude Code sub-agent `/hops` runs to build, edit or delete a dashboard. |
+| `.claude/agents/hops-app-builder.md` | The Claude Code sub-agent `/hops` runs to build, edit or delete an app and fix it until it serves. |
+| `.claude/agents/hops-train-agent.md` | The Claude Code sub-agent `/hops-build` runs to train a model until it meets its target. |
+| `.claude/agents/hops-infer-agent.md` | The Claude Code sub-agent `/hops-build` runs to build inference until it meets its SLA. |
 | `.claude/settings.local.json` | Allows `Bash(hops *)`, so Claude Code can run the CLI without asking before each command. |
 
 `AGENTS.md` is read by Claude Code, Codex, GitHub Copilot and OpenCode.
 The files under `.claude/` are read by Claude Code only.
 Running `hops setup` again in a directory that already has these files updates the files you have not edited and leaves the ones you have edited unchanged.
+A file an earlier version wrote and this one no longer ships, such as `.claude/agents/hops-fti.md`, is removed when you have not edited it and reported otherwise.
 Pass `--no-scaffold` to authenticate without writing any files.
 
 ### Add the Hopsworks skills
@@ -1916,6 +1922,293 @@ To read the skills without adding them to a repository:
 hops skills list
 hops skills show hops-fg
 ```
+
+### Build an ML system
+
+```bash
+hops factory run ml-batch        # or ml-realtime, ml-streaming, ml-agent
+```
+
+The Factory and every `hops factory` command are available only on a cluster whose `factory_enabled` variable is `true`; elsewhere the commands stop with `The Factory is not enabled for this Hopsworks cluster.`
+The Factory builds in the Terminal, so it also needs the Terminal enabled: the Helm chart sets `factory_enabled` only when `terminal.enabled` is true, and the menu hides the Factory while the Terminal is off. On a cluster where `factory_enabled` is not `true`, the Factory and ML system REST endpoints answer `403` with error code `150115`.
+`hops factory run <factory>` asks the factory's questions in the terminal, section by section, with the factory's defaults: for `ml-batch` the system's name, what it should predict, its cadence and run time, its data (feature groups in the project, synthetic data described in a sentence, and files), how its predictions are used, and its monitoring.
+`--answers answers.json` takes the answers from a file instead, as the **Factory** page writes it, and `--preset <id>` starts from one of the factory's examples (`churn-example`, `recs-example`, `fraud-example`, `debitcard-example`, `gis-example`, `helpdesk-example` or `run-example`, as `hops factory get <factory>` lists them under `presets`).
+`ml-streaming` builds a real-time system whose batch features are dbt models run in Trino on a schedule and whose streaming features are a Spark Structured Streaming job; it also asks how often the dbt models run and the streaming window in minutes.
+Its `debitcard-example` generates a year of synthetic debit card authorisations, 1,000,000 by default, streams more on the same cards, and scores each card's last hour against its spending baseline with an Isolation Forest deployment and a JavaScript fraud console.
+The help desk agent answers from documents you upload to `Resources/helpdesk-docs` (PDF, text, Markdown, Word or OpenDocument), which a job cuts into passages and embeds with a sentence-transformers model downloaded into the Model Registry, and from the customer's recent events; it is a LangGraph agent deployment with a JavaScript chat app.
+For an agentic system, `hops factory run ml-agent` asks for an OpenAI-compatible LLM endpoint, model and API key (read without echo), unless your account already has them, and saves them as your account environment variables `LLM_URL`, `LLM_MODEL` and `LLM_API_KEY`, which the agent reads.
+The answers are written to `<slug>/system.yaml` in the current directory, and what they leave out, such as where the code goes, is asked next.
+
+A new data source is created with `hops datasource create`, and its password or key is read without echo and passed to it in an environment variable, so it never appears on the command line or in `system.yaml`.
+
+`hops factory run` then starts Claude Code with `/hops-build <slug>`, which completes the specification and builds the feature, training and inference pipelines.
+Each system's directory holds an `AGENTS.md` saying the system is built from `system.yaml`; `hops factory run` and the **Factory** page start Claude Code in that directory, so it reads it, checks what a change to `system.yaml` means for the pipelines and the assets they create, and finds what a changed component affects downstream with `hops fg lineage`, `hops fv lineage`, `hops td lineage`, `hops model lineage` and `hops deployment lineage`.
+Inside tmux, as in the Hopsworks terminal, it opens a new tmux window named after the system, so several systems can be built at once.
+Pass `--no-launch` to record the system only.
+`hops factory run <factory> <slug>`, or `hops factory run <factory>` inside the system's directory, resumes a system: its `system.yaml` records the factory, the factory version and every answer, so it needs no answers file.
+
+`hops factory run` registers each system with the project, by the HopsFS directory of its code, or by its GitHub repository when you build from an external client.
+A GitHub repository the build creates, an example's included, is named `hops-<slug>`. When you already have a repository of that name, it is `hops-<slug>-<project>`, and when that is taken too, `hops-<slug>-<project>-2`, `hops-<slug>-<project>-3` and so on.
+**Factory**, in the project menu below Catalog, opens on a box: describe the system you want, and Platform Intelligence finds the project's factories that could build it, up to five.
+They show as buttons below the box, the most likely highlighted in the middle; a box above them says why the selected factory fits and what it would build, and picking another factory explains that one.
+The green **Build** button opens the selected factory's form, at its blueprint when the description is one, filled in with what the description says, for you to check and press **Create**.
+This needs Platform Intelligence configured on the cluster; without it the box is not shown, and you pick a factory from **From Template**.
+A factory's form has a chat beside it for settling the requirements, and it starts on its own when the form opens.
+It writes a draft `system.yaml` in `factory-drafts/<factory>` of your HopsFS home, with the form's answers, and starts Claude Code there, which says in a few lines what will be built and asks only the few questions that change it: the data, what it produces and for whom, how often and how much history, a dashboard or app, and who hears about failures; technical details are left to the build.
+It writes your answers into the draft, which the form shows as it changes, and notes what the form has no field for, which the build receives too; then it summarizes again and asks whether to create the system or change something.
+What you type in the form goes to Claude Code with your next message.
+Say in the chat that you want to create the system, and Claude Code checks the required answers and the page creates it, as **Create** does; **Back** and **Create** are at the top right of the page.
+The form's chat tab in the Terminal closes once the system is created.
+**From Template** lists the factories without the description: **ML System** holds **Batch ML system**, **Real-time ML system**, **Batch and streaming ML system** and **Agentic system**, **Analytics** the analytics layer factories, and each has a **Blueprints** submenu of its examples, each opening its factory's form filled in.
+The cogwheel opens **Manage factories**.
+**Existing Systems**, shown once a factory has built a system, lists the project's systems for every member: each with its factory, type, status, phases done, owner and last update, and an open folder for the ones whose code you can open, a lock for the ones you cannot, and a link for the ones in a Git repository; the box above it filters the list.
+**Login to GitHub** runs `github-login` in a Terminal tab; the page shows whether the terminal's GitHub CLI is logged in, which the build needs to create the repository.
+With the chat on, the tab stays hidden and the chat shows GitHub's one-time code with **Open GitHub's device page**, which copies the code and opens the page, and **Copy code**; without the chat, the device page opens on the click and the Terminal tab shows the code.
+The tab closes once the login succeeds.
+Each ML system form asks for the system's name, which is also its directory's and, as `hops-<name>`, its GitHub repository's unless that name is taken (lowercase letters, digits and hyphens), what it should predict, its targets (a batch system's cadence and run time, a real-time or agentic system's latency and throughput), its data (feature groups in the project, synthetic data described in a sentence, and files), and how its predictions are used.
+Every form starts with **Create new GitHub repo**, checked; unchecked, it asks for the URL of an existing GitHub, GitLab, Bitbucket or other Git repository, which the build pushes to with git alone.
+Checked, **Create** tells the build that you confirm the creation of the system's new private repository under your GitHub account, `hops-<name>` or the next free name above, so Claude Code does not stop to ask for that confirmation.
+Sections with defaults show a one-line summary of their answers, with **Edit** to change them.
+For an agentic system the LLM's endpoint, model and key are saved as your account environment variables, `LLM_URL`, `LLM_MODEL` and `LLM_API_KEY`.
+For a batch or real-time system, **Monitoring** (collapsed) sets whether every prediction logs the features it used (on by default) and, in your own words, what to monitor and alert on, such as drift in a feature against the training data or a failed job.
+The build turns them into feature logging on the feature view, feature monitoring checks and alerts, and sends a failure alert for every job the system owns to the project's alert receiver.
+**Create** runs `hops factory run ml-batch --answers` (or `ml-realtime`, `ml-streaming`, `ml-agent`) in a Terminal tab named after the system, which records it and starts Claude Code on `/hops-build <name>`; the page opens the system once it is registered.
+**Location**, above the form of every factory, sets the folder the system's directory goes in, which holds its code and is its git repository: your home folder in the project by default, or another folder of the project you can write to, such as one in `Resources` so every member can open the code; from the CLI, run `hops factory run` in that folder.
+
+A system's page is a chat beside the system.
+The chat is the conversation of the Claude Code in the system's Terminal tab, the build while it runs: its replies, its tool calls folded to one line, and its questions and permission requests as cards whose options answer them.
+A message you send is typed into that tab; when no Claude Code runs there, the first one starts it with the system's `system.yaml` and asks for an overview of the system.
+The Terminal panel closes and the project menu collapses while the chat is shown, on a factory's form and on a system's page; the menu stays collapsed when the Terminal opens, and its toggle opens it again. The Terminal must be running for the chat to reach Claude Code.
+When Claude Code in the Terminal is not logged in, the chat says so with **Log in to Claude Code**, which runs `/login`: the chat shows **Open the sign-in page** and a box for the code the page shows once you authorize.
+After the login Claude Code waits for Enter, and the chat shows `Logged in to Claude Code. Press Enter to continue.` with **Press Enter**.
+While Claude Code works, the line that says so has **Press Enter**, which sends Enter for a prompt Claude Code waits on in the Terminal outside the conversation, and **Show the Terminal**, which shows the Terminal's last lines with **Enter** and **Esc**.
+Beside the chat, **App** shows the system's app or dashboards in the page; while the app is stopped, **Start app** starts the deployments it calls and then the app, and while it is starting or redeploying the button says so instead.
+**Assets** shows the system with its status, repository, files, phases and actions, then what it has made in three columns, the feature, training and inference pipelines, each asset linked to its page with its state, and its jobs below.
+A feature group shows when it last changed and the rows that commit appended, updated and deleted.
+A job shows its schedule (cron in UTC) and its next run, with **Edit** for its settings; a job that backfills has **Backfill**, which runs it once over a start and end time you choose, starting where its last backfill ended, and any other job has **Run**.
+An app, deployment or feature group that `system.yaml` records but the project does not have shows as missing once the phase that builds it is done, or the system is built; the system's pages then say it is not fully built, with a button that asks Claude Code to rebuild it. While a build runs, an asset its phase has not built yet is not reported.
+**System Details** shows the specification, `system.yaml`, at the top, then the phases, what is done and what is left, and the requirements, locked.
+`system.yaml` shows what changed since your last message in the chat: added lines are highlighted and removed lines struck through, with the count of each; **Edit the file** opens the editor, and **Mark as seen** clears the highlights.
+**Open in Terminal** brings the system's Terminal tab to the front, or opens one with Claude Code started in its directory.
+**Architecture** opens the system's architecture: its data sources, feature, training and inference pipelines and app, with the data flowing between them, redrawn as `system.yaml` changes.
+A box whose part of the specification changed since you last looked is marked until you click it; clicking a box shows that part of `system.yaml`, which you can edit and save, and boxes can be dragged.
+**Status**, a view after **Assets** once every phase is done, shows the last status report.
+Pick how far back it looks, **1 day**, **7 days** or **Custom** (a number of days or hours), and press **Generate Report**: it checks the system's jobs, what its feature pipelines wrote, and its deployments and app over that window, shows the report, and sends its findings to the chat, where Claude Code summarizes them and suggests fixes.
+The browser remembers the window you picked.
+For each feature pipeline the report sets the rows it read against the rows it wrote in the window, and checks each output for columns with nulls and for hours or days with no rows.
+A Hopsworks administrator can turn the chat off with `hopsworks.factory_chat_enabled: false` in the Helm values, the `factory_chat_enabled` variable: a system's page then shows its views at the full width, and **Status** is a button among the system's actions that opens the report on a page of its own.
+A system whose directory is deleted shows as unavailable, and leaves the list 24 hours later.
+Registering a directory needs write access to it, and refreshing a registered system needs its owner or a Data owner, so a member cannot claim another member's system.
+A system records the factory version and the digest of the definition it was built from, and keeps them when it is refreshed.
+**Delete** asks what to delete: the system's entry in the list only, that and every asset the system created (its app, deployments, jobs, models, feature view and training data, the feature groups it writes, the data sources it created and its cloned environments; feature groups it only reads are kept), or those and its GitHub repository, which is deleted only when the build created it for this system alone. The assets are deleted in the terminal, downstream first, and the entry last, so a delete that fails part way leaves the system in the list to be deleted again. Deleting the assets also deletes the code directory; deleting the entry only keeps it.
+Deleting the assets or the repository needs a Data owner, since only a Data owner can delete apps, deployments and jobs; other members can delete the entry only.
+An asset another system in the project also names is kept, and so is an asset whose name does not contain the system's name unless its description names the system: a system made from an example starts from the example's `system.yaml`, and its delete must not remove the example's app or tables.
+The delete lists each asset it kept and why.
+**Delete** closes the system's Terminal tab, which stops its Claude Code, and the tab of its form's chat; while the assets are deleted, a notice shows that the delete is in progress.
+
+```bash
+hops factory list                                   # the factories and how many systems each built
+hops factory run <factory> [--answers F] [--preset P]  # a new system, then build it with Claude Code
+hops factory run <factory> <slug>                   # resume a system from its system.yaml
+hops factory system list [--factory <factory>]      # the project's systems and whether you can open their code
+hops factory system register <dir> [--name N]       # register or refresh one by hand
+hops factory system status <system>                 # write its health report, status/report.html
+hops factory system remove <system>                 # remove it from the list; its code is kept
+hops factory system delete <system> --assets [--repo]  # also delete what it created, and its repository
+hops factory system write-doc <system> --expected-sha256 H --from F  # replace system.yaml unless it changed since it was read
+hops factory system lease show|acquire|renew|release <system>  # the build lease that keeps two builds off one system
+```
+
+### Build a silver analytics layer
+
+An analytics layer organizes tables as bronze (raw data as it arrived), silver (cleansed and conformed) and gold (consumption-ready).
+Hopsworks installs an archived schematized tag, `analytics_table`, whose `layer` is `bronze`, `silver` or `gold` and whose `lifecycle` is `dev`, `staging` or `prod`; every change of a table's value is kept in the tag history.
+When you ingest data with a dltHub data source, **Tag as bronze tables** in the review, off by default, tags every feature group it creates as bronze.
+
+**From Template > Analytics**, in the Factory, lists **Silver layer**, **Data Mart**, **Data pipeline** and **Data ingestion**; the bronze layer is built from its blueprint. **Silver layer** builds a silver layer from the project's bronze feature groups.
+A project without feature groups has nothing to build from: ingest raw data as bronze tables first, or build the example bronze layer.
+
+**Blueprints** in the same menu lists example layers. **Synthetic clickstream (bronze)** builds a bronze layer of generated web shop data with `hops factory run analytics-bronze --preset clickstream-example`, which copies the generator into `clickstream-bronze/` and starts Claude Code on `/hops-bronze clickstream-bronze`.
+It writes four offline Delta feature groups tagged `layer: bronze`: `clickstream_customers`, `clickstream_products`, `clickstream_orders` and `clickstream_clicks`.
+A backfill job writes the 30 days up to the last midnight: 10,000 customers, 1,000 products, 20,000 orders and 1,000,000 clicks.
+An hourly job writes 10,000 clicks an hour, and a daily job writes the day's new customers, products and orders and its changes: profile updates, price changes, discontinued products and order status changes.
+The data is raw on purpose, for a silver layer to cleanse: about 0.001% of clicks arrive twice under a new `ingest_id`, and an order's lines are a JSON array in its `items` column.
+The page asks for the bronze tables to build from (only those tagged bronze are shown while any are), the silver tasks (deduplicate, cast types, standardize values, handle nulls, validate with a rejects table, protect personal data, conform entities, surrogate keys, referential checks), additional tasks in your own words, the engine, the refresh cadence and the lifecycle.
+The engine is dbt on Trino unless an additional task needs code SQL does not express well, when PySpark is suggested.
+Each bronze table has its own refresh, hourly, daily or weekly; a silver table refreshes as often as its most frequently updated source, and the layer gets one job per refresh, each with its own schedule and freshness target.
+It also asks how the tables behave, with defaults: history (`latest`, one row per key, or `full`, every version by time), deletes in bronze (`ignore` or `propagate`), bronze schema changes (`fail`, or `evolve` by adding new columns), a late-data lookback re-read before each window (none, a day or a week), the share of rejected rows above which a run fails, with an alert when one fails, and a freshness target.
+**Create** runs `hops factory run analytics-silver --answers` in a Terminal tab named after the layer, which records its specification in `<name>/system.yaml` and starts Claude Code on `/hops-silver <name>`.
+
+The build profiles the bronze tables, designs the silver tables, writes and tests the code, backfills the whole bronze history once, schedules the job and tags the silver feature groups `layer: silver`, and verifies one window.
+Silver tables are feature groups, materialized, never views, and in third normal form: one table per entity or event, every column depending on its table's key alone, lookups in tables of their own, and no aggregates, which belong in gold.
+Each scheduled run processes only the bronze rows that arrived in its window, `[HOPS_START_TIME, HOPS_END_TIME)`, which Hopsworks sets for every scheduled run, so the silver tables are refreshed incrementally; running a window again changes nothing.
+`system.yaml` drives the layer's lifecycle, as an ML system's does: when it changes after the build (its bronze tables, tasks, engine, refresh or lifecycle), the layer's page says what changed and **Apply changes** runs `/hops-silver <name> apply`, which retags for a new lifecycle, reschedules for a new refresh, and for a changed task, engine or source writes a new version of each silver table whose content changes, backfilled from the whole bronze history, and switches the job to it; earlier versions are kept.
+Every silver table records its bronze tables as its parents, so the lineage shows them; its partitioning (none, or by hour, day or week) is decided from the volume and time span of the bronze table's files; and the job is scheduled with catch-up, so windows missed while the scheduler was down are replayed.
+A layer's page shows its requirements as they were filled in.
+**Status** on a built layer's page reports the job's runs and each table's rows, last write against the freshness target, rejected share against the limit, and file layout, with a box for asking Claude Code anything about the report, filled in with a request to fix the problems it found; **Backfill** reprocesses every bronze row into the silver tables, running each job.
+A layer's page shows its phases, the silver tables and jobs it made, the bronze tables it reads, and its tasks, with links to the layer's GitHub repository and to its dbt code in the file browser.
+An analytics pipeline's silver and gold layers share one GitHub repository, `hops-<prefix>`, where the prefix is the layer's name without `-silver` or `-gold`: each layer is a directory in it, a gold layer joins the repository of the silver layer it reads, and the build uses the repository when it exists, creates it when it does not, and pushes every commit to it.
+Every job has a delete icon that asks whether to also delete the feature groups only that job writes; **Add tables** adds bronze tables, each with its refresh, and describes the silver tables wanted from them, which Claude Code designs and builds with the rest.
+**Delete** removes the layer from the Factory, or deletes it with its jobs, tables and directory; the tables a layer reads are never deleted.
+
+### Build a gold analytics layer of data marts
+
+**From Template > Analytics > Data Mart** builds a gold layer from silver tables: a Kimball dimensional model, a star or snowflake schema, for the queries the layer will serve.
+The page asks for those queries, the model, the first data mart's refresh and freshness target, and the silver tables to read.
+On a cluster with Platform Intelligence, **Suggest** selects the silver tables the answers so far call for, and drafts answers to the folded questions below that are still blank; change any of them as you like.
+The standards every data mart follows (naming, modeling, documentation and quality, proposed and editable) and the first data mart's requirements below are folded away: anything left blank is drafted by the build from the layer's questions and the silver tables, for you to confirm, and recorded in `system.yaml`, where you can edit it later.
+The first data mart is named after the layer.
+
+A gold layer is a set of data marts, each added, changed and deleted on its own, with its own fact and dimension tables and its own jobs, `<layer>-<mart>-<refresh>`, at its own refresh.
+A data mart's requirements are:
+
+- **Business purpose**: who the analysts are, the decisions and reports it supports, and who approves its business definitions.
+- **Existing tables**: the gold tables it can reuse, or new ones built from silver.
+- **Row grain**: what one row represents, what identifies it, and whether rows are individual events, periodic snapshots or aggregates.
+- **Metrics**: each metric's exact formula, exclusions, filters, currency and unit.
+- **Freshness and changes**: the refresh and freshness target, how late arrivals, updates and deletes are processed, and whether corrections restate published results.
+- **Verification**: example questions with the answers expected, in plain English; the totals that must reconcile, and with what; and how refreshes and reruns are proven correct. The build runs every check after the backfill and again after a refresh, records the results, and does not mark the mart built until each passes.
+- **Quality and access**: the invariants to test, what happens when a check fails (fail the run, quarantine the failing rows, or warn), who may read which rows and columns, and the projects it is shared with.
+- **Dashboards**: in plain text, the dashboards to build from the mart: for each, who reads it, the questions it answers, and the charts and filters wanted. Optional.
+
+**Create** runs `hops factory run analytics-gold --answers` and starts Claude Code on `/hops-gold <name>`, which builds each mart: its requirements, the design of its facts and dimensions (a dimension used by several marts is built once and shared), the dbt models with their tests, the backfill with the verification, the schedule and tags (`layer: gold`, the silver tables as parents), a verified refresh, and last the Superset dashboards the mart asks for, each over its gold tables and checked against the mart's verified numbers.
+The layer's page shows each mart with its phases, tables, jobs, verification results and links to its dashboards: **Edit** changes its requirements and applies the change, **Add data mart** adds one, and deleting a mart deletes its jobs and, if asked, its tables that no other mart lists.
+
+```bash
+hops factory run analytics-bronze --preset clickstream-example  # build the example bronze layer of generated data
+hops factory run analytics-silver [--answers answers.json]   # record a silver layer and build it with Claude Code
+hops factory run analytics-gold [--answers answers.json]     # record a gold layer and its first data mart
+hops factory run analytics-gold <layer> --change add-mart [--answers mart.json]     # add a data mart to a gold layer
+hops factory run analytics-gold <layer> --change edit-mart [--answers mart.json]    # change a data mart's requirements
+hops factory run analytics-gold <layer> --change delete-mart  # delete a data mart's jobs, and if asked its own tables
+hops factory run analytics-gold <layer> --change delete-job   # delete one job, and if asked the tables only it writes
+hops factory run analytics-silver <layer> --change add-tables [--answers new.json]  # add bronze tables to a silver layer
+hops factory system status <layer>                  # write the layer's health report, status/report.html
+hops job run <job> --start-time 1970-01-01 --end-time <now> --wait  # backfill: recompute a job's tables from the whole history
+hops factory system delete <layer> --assets         # delete the layer, its jobs and tables; never what it reads
+```
+
+A change to a built system, a layer's or any other, is one of its factory's `changes`: **Change** on the system's page lists them, and the layer pages' **Add data mart**, **Edit**, **Add tables** and delete icons open them.
+Each opens the change's form; saving records the request in the system's `system.yaml` (`changes`, `status: pending`) with `hops factory run <factory> <system> --change <id>`, and resumes the build in a Terminal tab, which carries out the pending requests first.
+A build deletes jobs and feature groups only with `hops factory system delete-assets`, which refuses a table the system reads or one of a lower analytics layer, anything another system names, and anything this system's `system.yaml` does not record or its name does not carry.
+A table with several versions needs `NAME:VERSION`.
+
+### Build a data pipeline
+
+**From Template > Analytics > Data pipeline** builds one scheduled pipeline that reads data sources, transforms them and writes the results to feature groups or files.
+The form asks for its name, the repository, the engine (PySpark, DuckDB, Polars, or dbt on Trino), and in your own words its data sources, its transformations and its outputs, with how often it runs.
+**Create** runs `hops factory run analytics-pipeline --answers` in a Terminal tab named after the pipeline and starts Claude Code on `/hops-factory-analytics-pipeline <name>`; the page opens the pipeline with the chat beside it.
+
+The requirements are settled in the form's chat before the pipeline is created, as for every factory, including how much history to backfill, alerting and a dashboard to inspect the outputs (Superset, a custom dashboard app, or none).
+The build's first phase does not ask them again: it profiles the sources and decides the technical details with best practice, the exact sources and joins, output keys, the incremental window, quality rules, the backfill and the alerts (failed and killed runs as critical and long-running ones as a warning, no alert per success, a warning when a run writes nothing or breaks its quality rules), as the chat's notes say or by default, and asks only when something essential is missing.
+
+The pipeline's `system.yaml` holds only a `features` block, the feature pipeline section an ML system has, with no training or inference pipeline:
+
+```yaml
+features:
+  pipelines:
+    - name: orders
+      engine: polars
+      reads: [{feature_group: raw_orders, version: 1}, {data_source: crm, table: customers}]
+      transformations: [drop test orders, join customers on customer_id, revenue per customer and day]
+      writes: [{feature_group: orders_daily, version: 1, primary_key: [customer_id], event_time: day}]
+      quality: {max_null_pct: 5, not_null: [customer_id, day]}
+      backfill: {last: 30d}
+      alerts: {receiver: {name: data-oncall, slack: ["#data-alerts"]}, on: [{status: failed, severity: critical}]}
+      job: {name: orders-pipeline-orders, schedule: {cron: "0 0 2 * * ?"}}
+dashboard: {kind: superset, dashboards: [{name: Orders, url: <url>}]}
+```
+
+The build then writes and tests the code, backfills the days or hours you asked for, schedules the job, sets up its alerts, builds the dashboard, which the system's **App** view shows, and verifies one run with `hops factory system status`.
+A Polars or DuckDB pipeline is a Python job that never starts a Spark job: the feature groups it writes have statistics off.
+
+### Ingest data with dlt
+
+**From Template > Analytics > Data ingestion** copies data from databases, warehouses, object stores, SaaS apps and REST APIs into feature groups with dlt (DLTHub), on a schedule.
+Its chat settles the ingestion with you in rounds until you say it is final.
+Say where your data is and what should land in Hopsworks, and the chat fills in the data sources: each with its name, its kind, where it is, the tables to ingest, and whether it is available for real-time ML, which also loads the online feature store.
+For a data source the project already has, the chat lists its tables and asks which to ingest; a new one is created.
+**Credentials** takes the passwords, keys and tokens the new data sources need, each as a name, such as `CRM_PASSWORD`, and a hidden value: on **Create** each is saved as a private variable of your account, the build stores it in its data source, which keeps it as Hopsworks keeps every data source's secrets, and then deletes the variable; only the names reach `system.yaml` and the chat.
+
+The chat previews each table and suggests, with its reason, the columns not to ingest, the columns to pseudonymize, which keep a keyed hash of each value so joins still work, and the rows to filter out.
+For each table the chat finds, from the source, the primary key and the event time, which become the feature group's, and whether the table is append-only: rows only added, never updated or deleted, as in events, logs and transactions, which are written with plain appends, much faster than the upserts a table whose rows change needs.
+It estimates each table's volume, in total and per day, and proposes partitioning and ordering only where it pays: none for a small table, a partition on the event time's hour, day or week for a large table written by time, and ordering by key for an entity table, in the format's own terms (a partition column or liquid clustering for Delta Lake, hidden partitioning with a sort order or z-order for Iceberg, partitioning with z-order for Hudi).
+**Tables, columns and rows** holds those choices and the transformations applied to every table; every column is cast to a type feature groups hold offline (Hive) and online (MySQL), and the default transformations make each table a valid feature group: column names as lowercase snake_case of at most 63 characters, timestamps in UTC, nested JSON flattened, and one non-null primary key per row.
+No load-time column is added: every write is a commit, whose time the table format keeps.
+**Schedule and history** sets how often it runs, whether to backfill all history, a window from a start to an end time, or nothing, and how rows arrive where a table does not say: append-only, changing (upserted by primary key), or replaced each run.
+**Storage and inspection** sets the table format, Delta Lake by default, Apache Iceberg or Apache Hudi, a Superset dashboard to inspect the ingested data, and whether the tables are tagged as bronze for a silver layer.
+
+The build creates the data sources and one feature group per table with its primary key and event time, then decides how the ingestion runs: the ingestion jobs Hopsworks runs in the shared `dlthub-ingestion-pipeline` environment by default, with a transform script for the transformations a column mapping cannot do, or its own dlt program when the source needs it.
+It clones the environment, as `<name>-dlt`, only when the ingestion needs a Python library the shared environment lacks.
+It records the result in `system.yaml`:
+
+```yaml
+ingestion:
+  sources:
+    - name: crm
+      kind: sql
+      reused: false
+      credentials: [CRM_PASSWORD]
+      tables:
+        - source: public.customers
+          ingested: {feature_group: crm_customers, version: 1}
+          primary_key: [customer_id]
+          online: true
+          write_mode: merge
+          cursor: updated_at
+  environment: {name: dlthub-ingestion-pipeline, cloned: false}
+  program: transform
+  job: {name: crm-ingestion-ingest, type: ingestion, schedule: {cron: "0 0 2 * * ?"}}
+```
+
+The chat stays open while it builds: it shows the rows each table loaded, with the dropped and pseudonymized columns as they are, and asks whether they are right before it schedules the job, builds the dashboard and verifies a run against the source's row counts.
+
+### Create your own factory
+
+A factory is a YAML definition: the questions of its creation form, the phases of its build, and the instructions Claude Code follows to build what the answers describe.
+The project's own factories are listed under **From Template** with the built-in ones of their kind, each opening the form it generates.
+The nine built-in factories, `ml-batch`, `ml-realtime`, `ml-streaming`, `ml-agent`, `analytics-bronze`, `analytics-silver`, `analytics-gold`, `analytics-pipeline` and `analytics-ingestion`, are read-only; clone one to change it.
+A form has no conditions: every question of a section is shown, and a section with defaults can be collapsed to a summary of its answers with **Edit**.
+
+**Factory > Manage factories** lists every factory with its version and how many systems it built.
+A data owner can create a factory, clone any factory, import a YAML file, export one, enable or disable a project factory, and delete one that has no systems left.
+The editor changes the questions, phases and build instructions as a form or as YAML, previews the form beside it, and saves each change as a new version; a system keeps the version it was built with.
+Importing shows the factory's build instructions in full first: Claude Code follows them in your Terminal, with your credentials.
+
+A clone of a built-in keeps the built-in's questions and build; answers the built-in build does not read are recorded in `requirements.extra` and the clone's instructions in `factory.instructions` of each system's `system.yaml`, which the built-in build follows too.
+A definition's questions can be text, numbers, dates and times in UTC, checkboxes, one or some of a list of options, one or several feature groups, a list of entries each with its own questions, account variables, which are saved in your account and never in `system.yaml`, and credentials, named secrets saved the same way whose names alone reach `system.yaml`; presets are named sets of starting answers, listed as the factory's **Blueprints**.
+
+```yaml
+apiVersion: hopsworks.ai/factory/v1
+kind: Factory
+name: churn-review
+title: Churn review
+form:
+  sections:
+    - id: basics
+      title: Basics
+      fields:
+        - {id: name, type: slug, label: Name, required: true}
+        - {id: question, type: textarea, label: "What should it answer?", required: true}
+phases:
+  - {key: build, label: Build, minutes: 20}
+build:
+  skills: [hops-superset]
+  instructions: Build a dashboard that answers requirements.question.
+```
+
+Every command but `validate`, which checks a local file without a cluster, needs a logged-in session on a cluster whose `factory_enabled` variable is `true`.
+
+```bash
+hops factory validate churn-review.yaml      # check a definition
+hops factory import churn-review.yaml        # review it, then add it to the project
+hops factory clone ml-batch fraud-ml         # start from a built-in
+hops factory export churn-review             # write churn-review.factory.yaml
+hops factory run churn-review                # answer its questions, then build with Claude Code
+hops factory delete churn-review             # refused while it has systems
+```
+
+The `hops-factory` skill lists every field type and rule.
 
 ## Hopsworks Java Library
 
@@ -3452,9 +3745,11 @@ Start by giving the connector a **name** and an optional **description**.
    Leave it empty when using an Oracle wallet: the wallet supplies the connection details, and the database field names the TNS alias to use.
 4. Enter the database name (service name for Oracle).
 5. Specify the port.
-6. Provide the username and password.
-7. For Oracle with mTLS, upload the wallet zip file and provide the wallet password (if required).
-8. Click on "Save Credentials".
+6. For Oracle, choose under `Credentials` whether they are `Stored with the data source` (the default) or `Provided by each user`.
+   With `Provided by each user` the username, password and wallet fields disappear and every member adds their own later, see [provided credentials][data-source-provided-credentials].
+7. For `Stored with the data source`, provide the username and password.
+8. For `Stored with the data source` on a database behind mTLS, upload the wallet zip file and provide the wallet password (if required).
+9. Click on "Save Credentials".
 
 <figure markdown>
   ![SQL Connector Creation](../../../../assets/images/guides/fs/data_source/sql_creation.png)
@@ -3490,6 +3785,245 @@ The MySQL and PostgreSQL drivers are included in Hopsworks by default.
 
 The Python engine reads Oracle via the Hopsworks Arrow Flight service, which handles the database connection server-side.
 No JDBC driver or wallet files are needed on the client, and the Spark JDBC limitations above do not apply.
+
+## Provided credentials for Oracle { #data-source-provided-credentials }
+
+A data source has a credentials mode.
+The Data owner chooses it when creating the data source, and it cannot be changed afterwards, because a switch would invalidate every member's setup at once.
+
+| Mode | Who enters the credentials | Who reads with them |
+| --- | --- | --- |
+| `Stored with the data source` (`SHARED`, the default) | The Data owner, once, in the data source form | Every project member |
+| `Provided by each user` (`PROVIDED`) | Each project member, for themselves | That member only |
+
+`PROVIDED` is available for the Oracle database type of the SQL data source.
+A provided data source stores the host or the wallet alias, the port and the service name, and nothing else.
+Creating one with a username, a password or a wallet is refused with `INVALID_CREDENTIALS_MODE_ARGS` (270339).
+The Python client raises the error itself, before sending the request, when a new provided `SqlConnector` carries any of them; each member adds credentials with `set_credentials()` once the data source exists.
+Reads run with the credentials of the member who makes them, so a Data owner who creates a provided data source adds their own credentials before browsing its tables or mounting feature groups; the UI opens the dialog for them right after the data source is saved.
+
+```bash
+hops datasource create sql oracle_sales --database-type ORACLE --host db.example.com --port 1521 --database ORCL --credentials-mode provided
+```
+
+### Adding your credentials { #data-source-provided-credentials-add }
+
+Each member adds their credentials once per data source.
+Data owners and Data scientists can add credentials; Feature store restricted members and Observers cannot.
+For a data source in a feature store shared with your project, you add them in the project that owns the data source, see [feature groups from a shared feature store][external-feature-group-shared-feature-store].
+Hopsworks tests them by opening a connection and running `SELECT 1 FROM DUAL`, and saves nothing when the database rejects them.
+Validate and save are rate limited to 5 calls per minute per user and data source; a call over the limit returns HTTP 429 with `DATA_SOURCE_CREDENTIALS_RATE_LIMITED` (270343).
+
+In the UI, open `Data Sources`, find the data source in the list and pick `My credentials` from its row actions.
+The `Credentials` column of the list shows `Shared`, or `Provided` with `Yours: set`, `Yours: missing` or `Yours: incomplete`.
+`Yours: incomplete` means your binding references an account entry that no longer exists, see [where your credentials are stored][data-source-provided-credentials-storage].
+In the dialog, type a username and a password, or pick an env var and a secret you already keep in your account.
+For a database behind mTLS, upload the wallet zip and give its password.
+The upload is staged as a new file, see [replacing a wallet][data-source-provided-credentials-wallet].
+Click `Validate`, then `Save`.
+`Save` stays disabled until `Validate` has passed for the values in the dialog, and editing a field disables it again.
+`Remove my credentials` in the same dialog deletes your binding, your wallet file and the account entries saved under their default names.
+
+From Python, the same operations are methods on the SQL connector:
+
+```python
+import hopsworks
+
+
+project = hopsworks.login()
+fs = project.get_feature_store()
+sc = fs.get_data_source("oracle_sales").storage_connector
+
+if sc.validate_credentials(user="SCOTT", password="..."):
+    sc.set_credentials(user="SCOTT", password="...")
+
+# a database behind mTLS also takes a wallet, uploaded to a new file in your home
+wallet = f"{project.home_path}/.datasources/oracle_sales/wallet-7f3a9c.zip"
+sc.set_credentials(
+    user="SCOTT", password="...", wallet_path=wallet, wallet_password="..."
+)
+
+# reuse a secret you already keep in your account
+sc.set_credentials(user="SCOTT", password_secret="my_oracle_pwd")
+
+sc.get_credentials()
+sc.delete_credentials()
+```
+
+`set_credentials` raises a `FeatureStoreException` carrying the database's own error when the credentials are rejected.
+`get_credentials` returns the names of the account entries your binding references, never their values.
+
+From the CLI, `hops datasource credentials` has `set`, `validate`, `show` and `delete`.
+`--password -` and `--wallet-password -` read the value from stdin, one of them per call, and without either flag the `HOPSWORKS_DS_CREDENTIALS_PASSWORD` and `HOPSWORKS_DS_CREDENTIALS_WALLET_PASSWORD` environment variables are read.
+`--wallet` takes a local zip and stages it as a new wallet file for you.
+
+```bash
+HOPSWORKS_DS_CREDENTIALS_WALLET_PASSWORD=... hops datasource credentials set oracle_sales --user SCOTT --password - --wallet ./Wallet_ORCL.zip
+hops datasource credentials show oracle_sales --json
+```
+
+```json
+{
+  "status": "VALID",
+  "username_env_var": "DS_ORACLE_SALES_67_USER",
+  "password_secret_name": "ds_oracle_sales_67_password",
+  "wallet_path": "/Projects/sales/Users/scott/.datasources/oracle_sales/wallet-7f3a9c.zip",
+  "wallet_password_secret_name": "ds_oracle_sales_67_wallet_password",
+  "validated_at": "2026-10-07T09:12:44Z"
+}
+```
+
+`hops datasource list` shows the mode in its `CREDENTIALS` column: `shared`, `provided: yours set`, `provided: missing` or `provided: incomplete`.
+
+### Where your credentials are stored { #data-source-provided-credentials-storage }
+
+| Credential | Stored as | Default name |
+| --- | --- | --- |
+| Username | Env var in your account, private | `DS_<NAME>_<feature store id>_USER` |
+| Password | Secret in your account, private | `ds_<name>_<feature store id>_password` |
+| Wallet zip | File in your home directory in the project | `/Projects/<project>/Users/<username>/.datasources/<name>/wallet-<random>.zip` |
+| Wallet password | Secret in your account, private | `ds_<name>_<feature store id>_wallet_password` |
+
+`<NAME>` is the data source name upper-cased with every character outside `A-Z`, `0-9` and `_` replaced by `_`; `<name>` is the same in lower case.
+The feature store id is part of the default names because your account entries are not scoped to a project, so two data sources with the same name in different feature stores would otherwise share one entry.
+The names are editable in the dialog and through the `user_env_var`, `password_secret` and `wallet_password_secret` arguments, so an existing entry can be reused instead of creating one.
+Your home directory is readable by you alone, so the wallet is too.
+
+The data source keeps a reference to these entries, not a copy.
+Fetching or listing a provided data source returns the status of your binding and the names of your env var and secrets, never your username or password.
+The Python client reads the values from your own account entries when it needs them.
+Deleting the secret or the env var from your account leaves the binding `INCOMPLETE`, and the data source refuses to read until you set your credentials again.
+Removing your credentials deletes the binding, the wallet file, and the env var and secrets that carry the default names above.
+The same deletion happens for a member who is removed from the project, and for every member when the data source is deleted.
+Entries saved under names of your own stay in your account, since you may use them elsewhere.
+
+### Replacing a wallet { #data-source-provided-credentials-wallet }
+
+Every wallet upload, from the dialog or with `hops datasource credentials set --wallet`, is staged as a new file, `<home>/.datasources/<name>/wallet-<random>.zip`, so it never overwrites the wallet your binding points at.
+A wallet that fails validation, or a save the database rejects, leaves your binding and its wallet unchanged.
+When the save succeeds, the binding points at the new file and Hopsworks deletes the wallet it pointed at before.
+From Python, upload the wallet under a name of your own that is not in use, and pass that path as `wallet_path`.
+
+### Runtime variables
+
+Every runtime you start in the project (a job, a Jupyter server, a terminal, an app or a Ray cluster) receives your credentials for each provided data source you have set them for.
+A job run receives them through a Kubernetes Secret created for that run, so the values are not in the pod spec that other project members can read.
+Code inside the runtime reads the same variables either way:
+
+| Variable | Value |
+| --- | --- |
+| `HOPS_DS_<NAME>_CONNECTOR_ID` | The id of the data source these variables belong to |
+| `HOPS_DS_<NAME>_USER` | Your username |
+| `HOPS_DS_<NAME>_PASSWORD` | Your password |
+| `HOPS_DS_<NAME>_WALLET_PATH` | `/hopsfs/Users/<username>/.datasources/<name>/wallet-<random>.zip`, when you set a wallet |
+| `HOPS_DS_<NAME>_WALLET_PASSWORD` | Your wallet password, when you set one |
+
+```python
+import os
+
+
+user = os.environ["HOPS_DS_ORACLE_SALES_USER"]
+password = os.environ["HOPS_DS_ORACLE_SALES_PASSWORD"]
+wallet = os.environ.get("HOPS_DS_ORACLE_SALES_WALLET_PATH")
+```
+
+!!! warning "Scheduled jobs run with the creator's credentials"
+    A scheduled run starts as the job's creator and receives the creator's provided credentials.
+    Anyone who can edit the job, its configuration or its app file, can make the next scheduled run execute their code with the creator's database login.
+    Keep a job that reads a provided data source editable only by its owner.
+
+Model deployments do not receive these variables.
+A deployment is shared by the project and serves every caller with the same environment, so one member's credentials would answer everyone's requests.
+
+The `HOPS_` prefix is reserved for the platform, so an account env var cannot shadow these.
+Two provided data sources in one feature store cannot map to the same `<NAME>`; the second one is refused at creation.
+The Hopsworks client reads these variables itself inside a runtime, so a `read()` through the data source needs no further configuration there.
+It uses them only for the data source whose id is in `HOPS_DS_<NAME>_CONNECTOR_ID`.
+A data source with the same name in another feature store, such as one shared with the project, maps to the same variable names, so for it the client reads your values from your own account entries.
+
+The `/hopsfs` path in `HOPS_DS_<NAME>_WALLET_PATH` is not mounted in Spark.
+When that path does not exist, the client downloads your wallet from HopsFS to the Spark driver instead, so a Spark read needs no further configuration either.
+
+### Access to mounted tables
+
+Only Data owners mount external feature groups, and a Data owner's database user may read tables that another member's may not.
+Hopsworks therefore keeps, per member and per external feature group on a provided data source, whether that member can read the backing table or query:
+
+| State | Meaning |
+| --- | --- |
+| `PENDING` | A check is queued and usually runs within a few minutes |
+| `OK` | Your credentials read the backing table |
+| `NO_CREDENTIALS` | You have not set complete credentials for the data source |
+| `INVALID_CREDENTIALS` | The database rejected the login, for example `ORA-01017` or `ORA-28000` |
+| `NO_ACCESS` | The login works but the table or query cannot be read: `ORA-00942`, which Oracle also returns for a missing privilege, or `ORA-01031` |
+| `ERROR` | Anything else, such as a network or TNS error or a timeout; the message is kept |
+
+A check runs on every feature group of the data source in these cases:
+
+- For you, when you set or remove your credentials.
+- For every member with credentials, when a Data owner mounts a new feature group.
+- For a member who joins the project.
+- Every 10 minutes, in a reconcile pass that matches the stored states with the current members and credentials and queues a check for any event that was missed.
+
+Checks run in the background in batches, and each one may take up to a minute, so a state usually settles within a few minutes.
+The state is shown in the feature group catalog and in the feature group's [Data Source submenu][external-feature-group-data-source].
+It informs you and does not gate reads: a read in `NO_ACCESS` still goes to Oracle and fails there with the database error.
+
+### Test Connection
+
+`Test Connection`, on the Data Source submenu of a feature group and on greyed-out feature groups in the catalog, runs the check for you now, as you, with a limit of one row, and stores the result.
+It takes up to a minute.
+Use it after a privilege was granted on the database side, since Hopsworks learns about grants only through the events above and this button.
+On a feature group whose data source has shared credentials it tests the shared credentials and stores nothing.
+
+### Trino catalogs { #data-source-provided-credentials-trino }
+
+A provided Oracle data source can back a [Trino catalog][trino-catalogs], and each query through the catalog runs as the member who sends it.
+Such a catalog is always a [private catalog][private-catalogs] of the member who creates it, named `_<username>__<name>` and available in every project they belong to.
+Each member who wants to query the data source through Trino creates their own, as a Data Owner or a Data Scientist.
+A request for a project catalog from a provided data source is refused with `CREDENTIALS_MODE_NOT_SUPPORTED` (270337), and a catalog on a provided data source cannot be shared, so only its owner queries it.
+The catalog stores no login.
+Its properties name the Trino extra credentials that carry the username and password with each query:
+
+```properties
+user-credential-name=hops_ds_<data source id>_user
+password-credential-name=hops_ds_<data source id>_password
+oracle.connection-pool.enabled=false
+```
+
+The connection pool is off because a pooled connection keeps the login of the member who opened it.
+Metadata caching is refused for the same reason: a cached table list would show one member what another member's database user can see.
+
+Which clients send the extra credentials:
+
+| Client | Extra credentials |
+| --- | --- |
+| SQL runner in the UI | Added by Hopsworks for the member running the query |
+| `project.get_trino_api().connect()` and `create_engine()` | Fetched by the Python client for the caller |
+| JDBC, the Trino CLI, Superset and other Trino clients | Sent by the client, or the Oracle login fails |
+
+A client that is not listed fetches your values from `GET /hopsworks-api/api/project/<project id>/trino/extra-credentials`, with an API key that has the `TRINO` scope, and sends each entry as a Trino extra credential, for example with the CLI's `--extra-credential hops_ds_<data source id>_user=<username>` or the JDBC `extraCredentials` property.
+A member who has not set credentials for the data source has nothing to send, and the Oracle login fails.
+
+Creating the catalog requires you to have set your own credentials for the data source.
+For a database behind mTLS, the catalog's wallet (`TNS_ADMIN`) is built from your wallet into a [mountable secret of your account][mountable-secrets-for-private-catalogs]; it only secures the transport, and every query still logs in with your username and password.
+The wallet follows your credentials: it is rebuilt when you save a new wallet, and deleted when you remove your credentials, when you leave the project (your credentials go with it), when the data source is deleted, or when you delete your last catalog that uses it.
+The catalog itself stays, like any private catalog, until you delete it.
+It reads only in projects that can read the data source's feature store, since only there are your extra credentials for it sent, and without your credentials it no longer reads at all.
+`Test connection` on the catalog runs with your credentials.
+The catalog becomes queryable after the query engine restarts, as described in [When the catalog goes live][when-the-catalog-goes-live].
+
+!!! api "API reference"
+
+    - <code class="doc-symbol doc-symbol-method"></code> [`FeatureStore.get_data_source`][hsfs.feature_store.FeatureStore.get_data_source]
+    - <code class="doc-symbol doc-symbol-method"></code> [`ExternalFeatureGroup.test_data_source_access`][external-feature-group-data-source-access]
+    - <code class="doc-symbol doc-symbol-class"></code> `SqlConnector`
+        - <code class="doc-symbol doc-symbol-method"></code> [`validate_credentials`][data-source-provided-credentials-add]
+        - <code class="doc-symbol doc-symbol-method"></code> [`set_credentials`][data-source-provided-credentials-add]
+        - <code class="doc-symbol doc-symbol-method"></code> [`get_credentials`][data-source-provided-credentials-add]
+        - <code class="doc-symbol doc-symbol-method"></code> [`delete_credentials`][data-source-provided-credentials-add]
+
+    <a class="hops-api-cta" href="../../../../../python-api/hopsworks/">Browse the full Python API :material-arrow-right:</a>
 
 ## Next Steps
 
@@ -5273,6 +5807,72 @@ As the last step, you will be able to rename the feature groups and confirm thei
     <img src="../../../../assets/images/guides/fs/data_source/confirm_feature_group.png" alt="Confirm the creation of a new feature group">
   </figure>
 </p>
+
+## Data Source submenu { #external-feature-group-data-source }
+
+An external feature group has a `Data Source` entry in its menu, after `Overview`.
+The page shows the data source the feature group reads through, which the overview used to show as a `Storage Connector` panel, and a `Test Connection` button.
+`Test Connection` reads one row of the backing table or query as you and shows the result; it takes up to a minute.
+
+For a data source with [provided credentials][data-source-provided-credentials] the page adds a `Your access` section: your access state, when it was last checked, the message the database returned, `My credentials` to add or change your own credentials, and `Test Connection`.
+The states and what each one means are listed in the data source guide, under access to mounted tables.
+
+### Greyed-out feature groups in the catalog
+
+In the feature group catalog, an external feature group you cannot read with your own credentials is greyed out, with the reason under its name and one button:
+
+| Your state | Reason shown | Button |
+| --- | --- | --- |
+| `NO_CREDENTIALS` | Add your credentials for data source `<name>` to use this feature group. | `Add my credentials` |
+| `INVALID_CREDENTIALS` | Your credentials for data source `<name>` were rejected. | `Test Connection` |
+| `NO_ACCESS` | You don't have privileges to read the backing table `<database>.<table>` in data source `<name>`. | `Test Connection` |
+| `ERROR` | Could not check access to data source `<name>`: `<message>`. | `Test Connection` |
+
+While a check is queued (`PENDING`) the card shows `Checking access` and keeps its normal look.
+A greyed-out feature group stays clickable, so its pages and its Data Source submenu remain reachable.
+
+### Feature groups from a shared feature store { #external-feature-group-shared-feature-store }
+
+Credentials for a provided data source belong to the project that owns the data source.
+To read a feature group from a feature store shared with your project, add your credentials in the project that owns its data source.
+In your own project, the Data Source submenu and the greyed-out card point you to the owning project instead of opening the credentials dialog.
+
+### From the API and the CLI { #external-feature-group-data-source-access }
+
+The same state is on the feature group object, and the check can be run from code:
+
+```python
+fg = fs.get_feature_group("sales_external", version=1)
+fg.data_source_access  # None for a data source with shared credentials
+
+access = fg.test_data_source_access()
+if access["status"] != "OK":
+    print(access["status"], access["error_code"], access["message"])
+```
+
+`hops fg list` has an `ACCESS` column with your state in lower case, and `-` for every other feature group.
+`hops fg test-access` runs the check:
+
+```bash
+hops fg test-access sales_external --version 1 --json
+```
+
+```json
+{
+  "status": "NO_ACCESS",
+  "error_code": "ORA-00942",
+  "message": "ORA-00942: table or view does not exist",
+  "checked_at": "2026-10-07T09:14:02Z"
+}
+```
+
+!!! api "API reference"
+
+    - <code class="doc-symbol doc-symbol-class"></code> [`ExternalFeatureGroup`][hsfs.feature_group.ExternalFeatureGroup]
+        - <code class="doc-symbol doc-symbol-attribute"></code> [`data_source_access`][external-feature-group-data-source-access]
+        - <code class="doc-symbol doc-symbol-method"></code> [`test_data_source_access`][external-feature-group-data-source-access]
+
+    <a class="hops-api-cta" href="../../../../python-api/hopsworks/">Browse the full Python API :material-arrow-right:</a>
 
 ================================================================================
 # Ingest Data with dltHub
@@ -9172,6 +9772,13 @@ If `pk2` is not provided, this returns feature values from the first feature gro
         allow_missing=True,
     )
     ```
+
+!!! attention "Behavior change for supplied and null keys in Python client 5.2"
+    The Python client now returns each serving key you pass in the entry in its slot of the vector, when the key is a feature of the vector and the lookup did not return it.
+    With `allow_missing=True`, an entry whose key matches no row returns `[99, None]` where it returned `[None, None]`, and the SQL client returns the key of a spine group instead of `None`.
+    A null key value is now treated as an omitted key by the REST client, which used to fail with HTTP 400.
+    Code that reads a null key slot as "no matching row" should check the other features instead.
+    With `allow_missing=False`, a missing feature still raises an exception.
 
 ### Retrieval with transformation
 
@@ -17362,8 +17969,32 @@ jobs, Jupyter and the terminal. This is how you get a CLI tool or a JavaScript d
 environment.
 
 Open the **Installed npm Libraries** tab beside the Python one and use **Install npm package**.
+A base environment is immutable, so on one the tab offers **Clone env** instead, and **Install npm package** opens the same clone dialog; the clone then opens on its npm tab with the install dialog up.
 Installed npm packages are listed there and can be uninstalled the same way, so an environment
 records what it carries rather than accumulating changes nobody can see.
+
+The install list, the package.json and git imports below, and the SDK methods for them need Hopsworks 5.2 or later; the `hopsworks` package of the same release has them.
+The dialog builds one install list and installs it as one operation and one build.
+Fill the list from the **Registry** and **package.json** tabs, in any combination, then press **Install**; the **Git repository** tab installs on its own.
+While it runs, a list of several packages shows as a single entry named `npm-install-...` with the packages on its row; once the build has finished, the installed packages replace it in the listing, each with its own entry that can be uninstalled on its own.
+If the build fails, the single entry stays with the error, and retrying or deleting it applies to the whole list.
+A second install started while a build is running waits for it and then runs as its own build.
+
+- **Registry** searches the configured registry for one package and version at a time and adds it to the list.
+- **package.json** installs what a `package.json` depends on, at exact versions.
+  Pick the file from the project, or upload it from your computer into the project's `Resources`, and the lockfile next to it when there is one: `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (classic and Berry), `pnpm-lock.yaml` or `bun.lock`.
+  Versions pinned in `package.json` stand; where a lockfile is given its recorded versions win, because they are what the project actually ran; ranges and dist-tags without a lockfile entry resolve to the newest matching release in the registry.
+  `devDependencies` are left out unless you tick **Include devDependencies**.
+  Each dependency is shown with what it resolved to, or with the reason it was skipped: workspace siblings, `npm:` aliases, git, file and URL dependencies are not registry packages and cannot be installed this way.
+  Optional dependencies start unticked.
+  pnpm and Bun catalogs (`catalog:` specs) are resolved from the lockfile, `pnpm-workspace.yaml` or the root `package.json`.
+  A binary `bun.lockb` is not read; run `bun install --save-text-lockfile` to get a `bun.lock` the import can use.
+- **Git repository** reads the `package.json` files of a repository at a branch, tag or commit, resolves them the same way against the nearest lockfile, and installs what resolved as soon as the repository has been read, as its own build.
+  It skips the install list: make the choices before reading, with **Include devDependencies**, **Include optionalDependencies** and **Also install the repository itself**, which installs the repository as a package under the name its `package.json` declares, pinned to the commit read.
+  A monorepo installs the dependencies of every workspace; give the **package.json path** (for example `apps/web`) to read just that one, which also skips the rest of a large repository.
+  A dependency that cannot be resolved stops the install with the reason, so a `package.json` or lockfile can be fixed first.
+  Private repositories use the git providers configured under your account settings.
+  Installing the repository itself runs npm; a repository that needs yarn, pnpm or Bun to build is still attempted.
 
 What the platform accepts:
 
@@ -17381,6 +18012,32 @@ an environment and install your own version there instead.
 
 Packages come from the registry the cluster is configured to use. Ask your administrator if you
 need an internal registry; it is a cluster-wide setting rather than a per-environment one.
+
+From the Python SDK, the same three paths are `install_npm`, `install_npm_from_package_json` and `install_npm_from_git`:
+
+```python
+import hopsworks
+
+
+project = hopsworks.login()
+env = project.get_environment_api().get_environment("my_custom_environment")
+
+# A list, one build.
+env.install_npm(["express@4.19.2", "lodash@4.17.21"], flags=["--no-fund"])
+
+# A package.json and its lockfile, local or in the project; devDependencies opt in.
+env.install_npm_from_package_json("package.json", lockfile_path="pnpm-lock.yaml")
+
+# A repository's dependencies, plus the repository itself pinned to the commit.
+env.install_npm_from_git(
+    "https://github.com/acme/mytool", ref="main", install_repository=True
+)
+
+# One package of a monorepo, by the path of its package.json.
+env.install_npm_from_git("https://github.com/acme/mono", path="packages/cli")
+```
+
+`resolve_npm_package_json` and `inspect_npm_git` return what would be installed without installing it.
 
 !!! note "Same name in both ecosystems"
     A name can exist on both PyPI and npm. The two are tracked separately, so installing `requests`
@@ -18165,7 +18822,7 @@ The badges sit next to the action button on three pages:
 
   ![WebSocket warnings on the Jupyter page](../../../assets/images/guides/jupyter/websocket-warnings-jupyter.png)
 
-- **Terminal**: next to the `Start Terminal` button inside the terminal panel.
+- **Terminal**: next to the `Start` button inside the terminal panel.
 
   ![WebSocket warnings on the Terminal panel](../../../assets/images/guides/jupyter/websocket-warnings-terminal.png)
 
@@ -18191,7 +18848,7 @@ On a single-instance deployment the two badges always agree, since the only inst
 
 ## What happens when a badge turns red
 
-- `Run Jupyter`, `Start Terminal`, and per-row `Start App` buttons are disabled while the **cluster** badge is red (no instance has capacity to serve a new session).
+- `Run Jupyter`, the terminal's `Start`, and per-row `Start App` buttons are disabled while the **cluster** badge is red (no instance has capacity to serve a new session).
   While only the instance badge is red the buttons stay enabled because refreshing or signing back in may land you on a different instance pod that still has capacity.
 - An already-running Jupyter server keeps working.
   Opening a new notebook tab inside a running Jupyter server may still fail if the pod that hosts it is at its per-session cap: the new tab's kernel WebSocket upgrade is closed with a `1013 TRY_AGAIN_LATER` close rather than attaching.
@@ -18275,6 +18932,41 @@ The session comes with tooling preinstalled:
 The panel header offers fullscreen, reconnect and collapse controls.
 Closing the panel does not stop the session; it keeps running until it expires or you stop it.
 Reopening the panel reconnects to the running session.
+
+================================================================================
+# Start the Terminal
+Source: https://docs.hopsworks.ai/latest/user_guides/projects/terminal/start/
+
+# Start the Terminal
+
+The terminal panel opens on a **Start** button, with keyboard focus on it.
+Its settings are kept in your browser, so the next visit starts the same terminal without entering them again.
+
+## Resources and Spark Cluster
+
+**Settings**, then **Resources**, sets the terminal's CPU cores and memory, and its GPUs when the cluster has GPU nodes.
+With more than 0 GPUs the GPU terminal starts; otherwise the Python terminal.
+While a terminal runs, **Apply & Restart** restarts it with the new resources.
+
+**Settings**, then **Spark Cluster**, starts a Spark cluster with the terminal when **Start a Spark cluster with the terminal** is checked; it is unchecked by default.
+The terminal pod is then the Spark driver, with the driver cores and memory set there, and runs the given number of executors, with Spark Connect optional.
+A Spark terminal has no GPUs.
+
+## LLM Provider
+
+**LLM Provider**, under **Start**, shows the provider the terminal's coding agents use; **Subscription**, the default, leaves `claude`, `codex`, `copilot` and `opencode` on their own logins.
+Clicking it shows the providers as cards, each saying whether its key is saved: Kimi, DeepMind, Berget, Mistral, GLM, Anthropic, OpenAI, Meta and OpenRouter.
+For a provider, pick a model or type a model id, enter its API key and press **Save key**, then **Test**, which checks the key against the provider's model list without spending tokens and says whether the model is listed.
+
+The key is saved as a private secret in your Hopsworks account, `llm_<provider>_api_key`, not in the browser; the provider and model are kept in the browser.
+When the terminal starts, the key is set as the provider's own variable (for example `KIMI_API_KEY`), and:
+
+- `codex` and `opencode` use the provider and model: every provider is written into `~/.codex/config.toml` as `model_providers.hops-<provider>`, so switching needs only that provider's key, and codex gets the model settings the provider's guide gives, such as Meta's and Kimi's 1M-token context window.
+- `claude` uses them for providers with an Anthropic-compatible API (Kimi, GLM, Anthropic, Meta and OpenRouter), through `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL` and the model variables each provider's Claude Code guide sets (for Kimi, `kimi-k3[1m]` with its 1M-token context and `kimi-k2.7-code` for the background tier); for the others it keeps its own login.
+  An `env` block in `~/.claude/settings.json` overrides these, so the terminal warns at start when it sets any of them.
+- `copilot` keeps its GitHub login.
+
+A provider with no saved key disables **Start** until you save one or pick **Subscription**.
 
 ================================================================================
 # Teleport Sessions
@@ -20968,7 +21660,7 @@ The create dialog lets you choose the app type, source, runtime environment, app
 
 | Setting | Typical value |
 | --- | --- |
-| App type | `STREAMLIT` or `CUSTOM` |
+| App type | `STREAMLIT`, `FLASK`, `GRADIO`, `NODEJS` or `CUSTOM` |
 | Proxy routing mode | `Root routing` for new apps, `Compatibility prefix` for legacy apps |
 | App base path | `/` for the app root, `/myapp` for a subpath |
 | Readiness probe path | Leave empty to use the platform default |
@@ -20980,9 +21672,13 @@ The create dialog lets you choose the app type, source, runtime environment, app
 
 ### App types
 
+The Flask, Gradio and Node.js types need Hopsworks 5.2 or later.
+
 - **Streamlit** apps are the default choice for dashboards and interactive ML UIs.
-- **Custom** apps are any web service that listens on `APP_PORT`.
-  Common choices are Flask, FastAPI, Gradio, and JavaScript frameworks such as Express.
+- **Flask**, **Gradio** and **Node.js** apps are started from their app file, like Streamlit, with a command Hopsworks generates, and listen on the configured port like a custom app.
+  Flask and Gradio take a `.py` file; Node.js takes a `.js`, `.mjs`, `.cjs`, `.ts` or `.mts` file.
+- **Custom** apps are any web service that listens on `APP_PORT`, started with the entrypoint command you write.
+  Common choices are FastAPI, Django, Panel, and JavaScript frameworks that need their own command.
 
 Use `App base path` to choose where Hopsworks mounts the app.
 Set it to `/` for a root-based app or `/myapp` for a subpath.
@@ -20997,8 +21693,8 @@ The compatibility mode is only for migrating older apps.
   This is useful when you want a proper Git-backed CI/CD flow and when you want local file edits not to affect a running production app.
   The deployed app only sees the repository contents that are present when it starts, so changes in your working tree stay local until you commit, push, and redeploy.
 
-For Streamlit apps, a project file must be a `.py` file.
-For Git-backed Streamlit apps, you also need to provide the entrypoint script relative to the repository root.
+For Streamlit, Flask, Gradio and Node.js apps, the app file must have the extension of its type.
+For Git-backed apps of those types, you also need to provide the entrypoint script relative to the repository root.
 For custom apps, the entrypoint command is required and the app file is optional.
 
 #### Auto-redeploy on new commits
@@ -21065,6 +21761,67 @@ Hopsworks manages the mount prefix for you, so Streamlit apps can stay root-base
 If the app is Git-backed, the entrypoint script is relative to the repository root.
 The default readiness probe for Streamlit is `/_stcore/health`.
 
+### Flask apps
+
+Flask apps are started with `flask --app <file> run --host 0.0.0.0 --port $APP_PORT`, so the file needs an `app` object, or an `app.py` style factory Flask can find.
+Hopsworks serves the app at its root, so define routes at `/` and `/health`.
+The proxy sends `X-Forwarded-Prefix` and the app also gets `APP_PUBLIC_PATH`; an app that builds absolute links can wrap itself in `ProxyFix(app.wsgi_app, x_prefix=1)` to generate them with the public path.
+
+```python
+from flask import Flask, jsonify
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+
+app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_prefix=1)
+
+
+@app.get("/health")
+def health():
+    return jsonify(status="ok")
+
+
+@app.get("/")
+def home():
+    return jsonify(status="ready")
+```
+
+### Gradio apps
+
+A Gradio app is run as a plain script, so it has to call `launch()` itself.
+Leave the host, port and root path to Hopsworks: it sets `GRADIO_SERVER_NAME`, `GRADIO_SERVER_PORT` and `GRADIO_ROOT_PATH`, which `launch()` reads, so the app listens on the configured port and its asset and API URLs resolve through the proxy.
+A `server_port` or `root_path` hardcoded in `launch()` overrides those variables and breaks the readiness probe.
+
+```python
+import gradio as gr
+
+
+def greet(name):
+    return f"Hello {name}!"
+
+
+demo = gr.Interface(fn=greet, inputs="text", outputs="text")
+
+if __name__ == "__main__":
+    demo.launch()
+```
+
+### Node.js apps
+
+A Node.js app is run with `node <file>` and gets `PORT` and `HOST`, the Express convention.
+TypeScript entry files run through Node's built-in type stripping, so they need no build step for plain type annotations.
+Dependencies are not installed at start: install them into the environment as npm packages, which is what the package.json import in the environment's npm tab is for.
+The `@hopsworks/app` module the image ships gives the app its project secrets and database access.
+
+```javascript
+import express from "express";
+
+const app = express();
+app.get("/health", (req, res) => res.json({ status: "ok" }));
+app.get("/", (req, res) => res.json({ status: "ready" }));
+app.listen(process.env.PORT, process.env.HOST ?? "0.0.0.0");
+```
+
 ### Custom apps
 
 Custom apps should bind to `0.0.0.0` and use the injected `APP_PORT`.
@@ -21102,11 +21859,13 @@ if __name__ == "__main__":
 For new apps, use `App base path` in the UI or API and let Hopsworks handle the browser mount prefix.
 Keep `Proxy routing mode` set to `Root routing` for new apps.
 
+Flask, Gradio and Node.js apps always use root routing; the compatibility prefix is for custom and Streamlit apps written against the old proxy.
+
 Examples:
 
 - FastAPI: `@app.get("/health")`
 - Flask: `Blueprint(..., url_prefix="/")`
-- Gradio: `demo.launch(..., root_path=None)`
+- Gradio: `demo.launch()` with the root path left to `GRADIO_ROOT_PATH`
 - Express: `app.use("/", router)`
 
 If you are migrating an older app that still depends on `APP_BASE_URL_PATH`, keep the legacy pattern only until the app code can move to root-based routing.
@@ -21123,19 +21882,140 @@ The platform injects app-specific variables such as:
 
 - `APP_BASE_URL_PATH` for legacy prefix-mode apps only
 - `APP_PORT`
+- `APP_PUBLIC_PATH`, the browser path the app is served at, for apps that build absolute links
+- `APP_ENTRYPOINT_SCRIPT` for Git-backed apps started from a file
 - `STREAMLIT_BASE_URL_PATH`
 - `STREAMLIT_PORT`
+- `GRADIO_SERVER_NAME`, `GRADIO_SERVER_PORT` and `GRADIO_ROOT_PATH` for Gradio apps
+- `PORT` and `HOST` for Node.js apps; these two are not reserved, so an app can set its own
 - `APP_FILE`
 - `APP_PATH`
 - `APP_KIND`
 - `APP_ARGS`
 
-Git-backed apps also receive the Git URL, provider, branch, and Streamlit entrypoint script.
+Git-backed apps also receive the Git URL, provider and branch, and the entrypoint script for every kind started from a file.
 
 `APP_BASE_URL_PATH` is only injected for legacy prefix-mode apps during migration.
 
 Some runtime names are reserved by the platform and cannot be overridden in the UI.
 That includes the app-path and routing variables above, plus other platform-managed names that start with `HOPS_`, `HOPSWORKS_`, `HOPSFS_`, or `AGENT_`.
+
+## Database and feature store access
+
+Every app can reach the project's feature store data from inside the pod:
+
+- the project's **online feature store database** on RonDB (MySQL protocol), where the online feature group tables live and where the app can keep its own tables: sessions, settings, agent memory, job results. This is on by default and controlled by **Database access** in the create dialog, `db_access` in the SDK and `--no-db-access` in the CLI;
+- the project's **offline feature groups**. A Python app reads them with the Hopsworks Python SDK, as any other Hopsworks client does: [feature group](../../fs/feature_group/index.md) reads and [feature view](../../fs/feature_view/batch-data.md) batch data. When Trino is enabled on the cluster, the app also gets the [Trino query engine](../trino/query_engine.md) as an SQL path to the same tables, which is what an app in another language uses. This does not depend on the database access flag: an app created with `db_access=False` still gets the Trino variables.
+
+The database is created on demand the first time an app with database access starts, so it works in a project that never created an online feature group. The app finds everything in its environment; nothing has to be configured.
+
+| Variable | Value |
+| --- | --- |
+| `MYSQL_HOST`, `MYSQL_PORT` | the online feature store MySQL server |
+| `MYSQL_DB` | the project database, the project name in lowercase |
+| `MYSQL_USER` | the MySQL user of the person who **started** the app |
+| `MYSQL_PASSWORD_SECRET_NAME` | the Hopsworks secret holding that user's password |
+| `TRINO_HOST`, `TRINO_PORT` | the Trino coordinator (HTTPS), when Trino is enabled |
+| `TRINO_USER` | the Trino user of the person who started the app, `<project>__<username>` |
+| `TRINO_PASSWORD_SECRET_NAME` | the Hopsworks secret holding that user's Trino password |
+| `TRINO_SCHEMA` | the project's offline feature store schema, `<project>_featurestore` |
+| `LIBHDFS_ROOT_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS` | the cluster CA as a PEM file, so any HTTP client can verify the Hopsworks REST API and the Trino coordinator |
+
+Passwords are never placed in the environment. They are private secrets of the user who started the app, and the app reads them with its own credentials, through the Python SDK or the REST API. The privileges follow that user's project role: an app started by a Data Owner can create tables and write, an app started by a Data Scientist has read-only access. There is no `TRINO_CATALOG` because the catalog depends on each feature group's format: `delta` for Delta feature groups, `hudi` for Hudi ones.
+
+The variables are listed on the app details page under **Environment variables**, next to the per-app ones.
+
+### Python
+
+Read offline feature groups with the Hopsworks Python SDK first. It is what the rest of the platform uses, it knows the feature group's format and location, and a feature view adds point-in-time joins and the model's transformations, so a dashboard and the model it shows stay consistent.
+
+```python
+import hopsworks
+
+
+project = hopsworks.login()  # in-cluster: no prompt
+fs = project.get_feature_store()
+
+# Offline feature group: a DataFrame, filtered and projected on the server side
+transactions = fs.get_feature_group("transactions", version=1)
+recent = (
+    transactions.select(["cc_num", "amount", "event_time"])
+    .filter(transactions.event_time >= "2025-01-01")
+    .read()
+)
+
+# Feature view: batch data with the point-in-time joins and transformations of the model
+fv = fs.get_feature_view("fraud_model", version=1)
+batch = fv.get_batch_data(start_time="2025-01-01", end_time="2025-02-01")
+```
+
+The online database is for the app's own tables and for primary-key lookups on the online feature group tables:
+
+```python
+import os
+
+import pymysql
+
+password = project.get_secrets_api().get(os.environ["MYSQL_PASSWORD_SECRET_NAME"])
+conn = pymysql.connect(
+    host=os.environ["MYSQL_HOST"],
+    port=int(os.environ["MYSQL_PORT"]),
+    user=os.environ["MYSQL_USER"],
+    password=password,
+    database=os.environ["MYSQL_DB"],
+)
+```
+
+Create the app's own tables with an explicit `ENGINE=NDBCLUSTER`, a primary key, and an `app_` prefix so they never collide with feature group tables (`<feature_group>_<version>`). Write features through `feature_group.insert()`, not straight into the online tables; reading them with SQL is fine.
+
+Trino is an extra option for a Python app: ad-hoc SQL over the offline tables, a join with another Trino catalog, or a query the SDK does not express. The SDK wraps the connection:
+
+```python
+trino = project.get_trino_api().connect(
+    catalog="delta", schema=os.environ["TRINO_SCHEMA"]
+)
+cursor = trino.cursor()
+cursor.execute(
+    "SELECT * FROM transactions_1 WHERE event_time >= DATE '2025-01-01' LIMIT 100"
+)
+rows = cursor.fetchall()
+```
+
+### JavaScript
+
+A [custom app](#custom-apps) can run Node.js: the `python-app-pipeline` environment ships Node and the `@hopsworks/app` module, which turns the variables above into ready-to-use connections. Import it from any app without adding it to `package.json`.
+
+```js
+import mysql from "mysql2/promise";
+import { mysqlConfig, trinoClient, query, getSecret } from "@hopsworks/app";
+
+// Online feature store / the app's own tables
+const pool = mysql.createPool({ ...(await mysqlConfig()), connectionLimit: 5 });
+const [rows] = await pool.execute("SELECT * FROM transactions_1 WHERE cc_num = ?", [ccNum]);
+
+// Offline feature groups through Trino; the catalog is the feature group's format
+const trino = await trinoClient({ catalog: "delta" });
+const recent = await query(trino,
+  "SELECT cc_num, amount, event_time FROM transactions_1 WHERE event_time >= DATE '2025-01-01' LIMIT 100");
+
+// Any other secret of the user who started the app
+const apiKey = await getSecret("openai_api_key");
+```
+
+`mysqlConfig()` returns `{ host, port, user, password, database }` for `mysql2`, `mysql` or `knex`. `trinoClient()` returns a client authenticated as the starting user that speaks the [Trino REST protocol](https://trino.io/docs/current/develop/client-protocol.html); `query()` collects a result as an array of row objects and `streamQuery()` yields rows page by page for large results, cancelling the query if you stop early. Integers above 2^53 come back as `BigInt`, so identifiers are never rounded. Both resolve the password once per process from the Hopsworks secret, and TLS to the platform works out of the box through `NODE_EXTRA_CA_CERTS`. Outside a Hopsworks pod the functions throw an error naming the missing variable; guard local development on `inHopsworks()`.
+
+```python
+node_app = apps.create_app(
+    "node_api",
+    app_kind="CUSTOM",
+    git_url="https://github.com/my-org/node-api.git",
+    git_provider="GitHub",
+    entrypoint_command='bash -lc "npm ci --omit=dev && exec node server.js"',
+    app_port=8080,
+)
+```
+
+Trino is the right path for scans and aggregations over the offline tables; primary-key lookups belong on the online tables. Trino's HTTP protocol has no bound parameters, so never interpolate user input into SQL text.
 
 ## Managing an app
 
@@ -21153,6 +22033,27 @@ The Apps list and the app details page expose the same lifecycle actions:
 Edit and delete are only available when the app is stopped.
 The app URL is only shown once the backend confirms that the app is actually serving.
 That means `RUNNING` and `Serving` are not the same thing: `Serving` is the state where the Hopsworks proxy can reach the app end to end.
+An app that [scales to zero when idle](#scale-to-zero-when-idle) shows `Idle` while it has no pod; its URL stays, and opening it wakes it.
+
+### Scale to zero when idle
+
+By default an app scales to zero when idle: the pod goes away once no request has been in flight for the **idle cooldown** (six hours by default, the cluster variable `pythonapp_idle_cooldown_seconds`), the app shows the `Idle` state, and the next request brings the pod back: the request waits for up to the **cold-start timeout** while the app starts, then goes through.
+Opening the app from the UI, or any request to its URL, is what wakes it.
+Turn **Scale to zero when idle** off for an app that must stay up: it then keeps its one pod, and any GPU it requested, for as long as it is started.
+
+The option needs KEDA and its HTTP add-on on the cluster (`kube_keda_installed`, installed by default), the same components that scale model deployments to zero; see [autoscaling](../../mlops/serving/autoscaling.md#scale-to-zero-when-idle).
+On a cluster without them the option is not offered and every app stays always on.
+Apps created before the option existed keep running always on until you edit them and turn it on.
+It is the only scaling an app does: an app always runs at most one replica.
+
+Things to know:
+
+- An open WebSocket counts as a request in flight. A Streamlit or Gradio tab that is open keeps the app up; the cooldown starts when the last tab closes.
+- A plain request, such as a Flask call, keeps the app active for a minute after it, and the cooldown counts from then: an app that answers short requests goes idle one cooldown plus a minute after the last one.
+- A wake starts a fresh process. Streamlit reconnects and reruns the script from scratch, and session state is gone, as after any restart.
+- The cold-start timeout defaults to, and cannot exceed, the cluster's app ceiling, `pythonapp_cold_start_timeout_max_seconds` (300 seconds by default). The request that woke the app also passes the ingress, whose read timeout (60 seconds for ingress-nginx unless an administrator raises it with the `nginx.ingress.kubernetes.io/proxy-read-timeout` annotation in the chart's `ingress.annotations`) fails it earlier whatever the interceptor would allow. A wake that outlasts either limit fails the request that woke the app, but the pod keeps starting, and the next request finds it ready.
+- The idle cooldown starts counting once the app is ready for the first time, so a slow start (image pull, environment setup) does not send it to zero before it has served; an app nobody opens goes idle one cooldown after it came up.
+- Auto-redeploy of a Git-backed app pauses while the app is idle, since nothing watches the branch; the pod clones the branch HEAD when it wakes.
 
 ### What the app details page shows
 
@@ -21171,9 +22072,10 @@ The details page includes:
 - Public access status for Streamlit apps
 - Git source details, if the app is Git-backed, including the branch, the deployed commit, and whether auto-redeploy is enabled
 - Monitoring configuration
+- Whether the app scales to zero when idle, with its cooldown and cold-start timeout
 - Resource requests
 - Runtime environment
-- Per-app environment variables
+- Environment variables: the per-app ones and the database and feature store access variables the platform injects
 - App metrics and Kubernetes health
 
 ## Public access for Streamlit apps
@@ -21218,10 +22120,55 @@ apps = project.get_app_api()
 app = apps.create_app(
     "customer_dashboard",
     app_path="Resources/app.py",
+    db_access=True,  # default: the online database, see above
 )
 
 app.run()
 print(app.app_url)
+```
+
+A Flask app from a project file, and a Node.js app from a repository:
+
+```python
+flask_app = apps.create_app(
+    "customer_api",
+    app_kind="FLASK",
+    app_path="Resources/api/app.py",
+    app_port=5000,
+)
+
+node_app = apps.create_app(
+    "customer_portal",
+    app_kind="NODEJS",
+    git_url="https://github.com/my-org/portal.git",
+    git_provider="GitHub",
+    entrypoint_script="src/server.js",
+)
+```
+
+A Streamlit app that scales to zero after two minutes without requests (scale to zero is on by default; the cooldown is what changes here):
+
+```python
+app = apps.create_app(
+    "customer_dashboard",
+    app_path="Resources/app.py",
+    idle_cooldown_seconds=120,
+)
+
+app.run()
+# ... two minutes later, fetch the app again: state is read from the backend, not cached
+app = apps.get_app("customer_dashboard")
+print(app.state)  # IDLE; opening app.app_url wakes it
+```
+
+An app that must stay up:
+
+```python
+app = apps.create_app(
+    "always_on_dashboard",
+    app_path="Resources/app.py",
+    idle_scale_to_zero=False,
+)
 ```
 
 A Git-backed app that redeploys itself on every push:
@@ -21248,6 +22195,7 @@ Common SDK methods:
 - `app.delete()`
 - `app.make_public()` / `app.make_private()`
 - `app.app_url`
+- `app.state`, `app.idle_scale_to_zero`, `app.idle_cooldown_seconds`, `app.cold_start_timeout_seconds`
 
 ## CLI
 
@@ -21268,6 +22216,8 @@ hops app delete <name> --yes
 Use `--git-url` and `--entrypoint-script` for Git-backed Streamlit apps.
 Use `--entrypoint-command` and `--app-port` for custom apps.
 Add `--git-auto-redeploy` to roll a Git-backed app onto every new commit.
+Pass `--no-db-access` for an app that must not get the online database variables; Trino access does not depend on it.
+Apps scale to zero when idle by default; pass `--idle-cooldown-seconds` and `--cold-start-timeout-seconds` if the defaults do not fit, or `--no-idle-scale-to-zero` for an app that must stay up.
 
 ## See also
 
@@ -21276,6 +22226,8 @@ Add `--git-auto-redeploy` to roll a Git-backed app onto every new commit.
 - [Python Deployment](../python-deployment/python-deployment.md)
 - [Session Capacity Warnings](../jupyter/session_capacity_warnings.md)
 - [Superset](../superset/superset.md)
+- [Query Engine (Trino)](../trino/query_engine.md)
+- [Secrets](../secrets/create_secret.md)
 
 ================================================================================
 # Deployment Creation
@@ -21502,8 +22454,9 @@ For full details on resource configuration, see the [Resources Guide](../../mlop
 
 ## Autoscaling
 
-Deployments use **Knative Pod Autoscaler (KPA)** to automatically scale the number of replicas based on traffic.
-You can configure the minimum and maximum number of instances as well as the scale metric (requests per second or concurrency).
+Deployments automatically scale the number of replicas between a minimum and a maximum.
+In Standard mode, the default, they are scaled by **KEDA** where the cluster has it, on CPU or memory utilization or on the requests at the gateway (concurrency or requests per second), and a minimum of 0 scales the deployment to zero when idle.
+In Knative mode they are scaled by the **Knative Pod Autoscaler (KPA)** on request traffic.
 
 For full details on autoscaling parameters, see the [Autoscaling Guide](../../mlops/serving/autoscaling.md).
 
@@ -22169,6 +23122,12 @@ An Oracle data source that authenticates with a wallet is delivered the second w
 
 No credential is ever sent to the browser, and rotating one stays a single operation on the secret rather than an edit of every catalog that uses it.
 
+An Oracle data source with [provided credentials][data-source-provided-credentials] is the exception: its catalog stores no login, and each query logs in with the querying member's own credentials, sent as Trino extra credentials.
+Such a catalog is always a [private catalog][private-catalogs] of the member who creates it, and each member creates their own.
+The SQL runner and the Python client send them for you; other Trino clients must send them themselves.
+Creating such a catalog requires your own credentials for the data source, and its connection test runs as you.
+See [Trino catalogs on a data source with provided credentials][data-source-provided-credentials-trino].
+
 ## Creating a catalog by hand
 
 A source that has no Hopsworks data source is added by hand.
@@ -22235,6 +23194,7 @@ A private catalog differs from a project catalog in what it can reach and who co
   See [Mountable secrets for private catalogs][mountable-secrets-for-private-catalogs].
 - It cannot be created from a data source, because a data source's credential belongs to the project.
   Enter the connection details yourself instead.
+  A data source with [provided credentials][data-source-provided-credentials-trino] is the exception: its catalog is always private, reads with your own credentials, and cannot be shared.
 - Only you can edit, delete or share it, from any of your projects and whatever your role there, so being made a Data Scientist in a project does not lock you out of your own catalogs.
   Other members of your projects cannot query it unless you share it with their project.
 - You write to it only from a project where you are a Data Owner, and read it from any other.
@@ -22329,6 +23289,7 @@ Other projects can read a catalog only through a share, which grants read access
 See [Sharing Catalogs and Feature Groups][sharing-catalogs-and-feature-groups].
 
 The query engine reads the external system as the database user in the connection credentials, so no share can expose more than those credentials allow.
+A catalog on a data source with provided credentials reads as its owner's own database user instead.
 Scoping that database user at the source remains the strongest limit on what a catalog can reach.
 
 A Data Owner of the project can also run a JDBC catalog's `system.query` table function, which passes a query to the source database as that database user.
@@ -24051,7 +25012,8 @@ Configure the resources to be allocated for predictor and transformer in a model
 ### Autoscaling
 
 Configure autoscaling for your model deployment, including scale metrics and scaling parameters, see the [Autoscaling Guide](autoscaling.md).
-How a deployment scales depends on whether it runs in KServe Knative or Standard mode, and scale-to-zero is available in Knative mode only, see [Deployment mode](autoscaling.md#deployment-mode).
+How a deployment scales depends on whether it runs in KServe Standard mode, scaled by KEDA where the cluster has it, or Knative mode, see [Deployment mode](autoscaling.md#deployment-mode).
+A minimum of 0 instances scales a deployment to zero when idle in either mode, see [Scale to zero when idle](autoscaling.md#scale-to-zero-when-idle).
 
 ### Scheduling
 
@@ -24414,8 +25376,8 @@ Additionally, you can find the nº of instances currently running by scrolling d
 
 !!! info "Scale-to-zero capabilities"
     If scale-to-zero capabilities are enabled, you can see how the nº of instances of a running deployment goes to zero and the status changes to `idle`.
-    To enable scale-to-zero in a deployment, see [Resources Guide](resources.md).
-    Scale-to-zero, and therefore the `idle` status, apply to deployments in ==Knative== mode only, see [Deployment mode](autoscaling.md#deployment-mode).
+    To enable scale-to-zero in a deployment, set its minimum number of instances to 0, see [Scale to zero when idle](autoscaling.md#scale-to-zero-when-idle).
+    In ==Standard== mode this needs KEDA on the cluster and a predictor without a transformer; in ==Knative== mode it is always available.
 
 ## Code
 
@@ -24485,7 +25447,7 @@ The status of a deployment is a high-level description of its current state.
     | CREATED  | Deployment has never been started                                                                                                            |
     | STARTING | Deployment is starting                                                                                                                       |
     | RUNNING  | Deployment is ready and running. Predictions are served without additional latencies.                                                        |
-    | IDLE     | Deployment is ready but scaled to zero or has no active replicas. Higher latencies (cold-start) are expected on the first inference request. Knative mode only. |
+    | IDLE     | Deployment is ready but scaled to zero or has no active replicas. Higher latencies (cold-start) are expected on the first inference request.                    |
     | FAILED   | Terminal state. The deployment has encountered an unrecoverable error. More details can be found in the status condition.                    |
     | UPDATING | Deployment is applying updates to the running instances                                                                                      |
     | STOPPING | Deployment is stopping                                                                                                                       |
@@ -26337,10 +27299,9 @@ For each component, you can set minimum (requests) and maximum (limits) resource
     | Shared Memory (MB) | 128             | n/a            | n/a                                                |
 
 !!! tip "Automatic downscale of inactive instances"
-    Setting the number of instances to **0** for a component (predictor or transformer) enables **scale-to-zero**.
-    This means that all instances of the component will automatically scale down to zero after a default period of inactivity of 30 seconds.
-    Scale-to-zero is available in ==Knative== mode only.
-    A deployment in ==Standard== mode always keeps at least one instance of each component running, see [Deployment mode](autoscaling.md#deployment-mode).
+    Setting the number of instances to **0** for a component enables **scale-to-zero**: its instances scale down to zero after a period without requests and the next request wakes it.
+    In ==Knative== mode this applies to the predictor and the transformer, once the stable window (60 seconds by default) has seen no traffic.
+    In ==Standard== mode it applies to the predictor of a deployment without a transformer, on a cluster with KEDA, after the idle cooldown (5 minutes by default), see [Scale to zero when idle](autoscaling.md#scale-to-zero-when-idle).
 
 ## Web UI
 
@@ -26378,7 +27339,7 @@ Moreover, you can choose the minimum number of replicas for each of these compon
 
 !!! note "Scale-to-zero capabilities"
     Set the number of instances to **0** to enable scale-to-zero on the component.
-    This requires the deployment to run in ==Knative== mode, see [Deployment mode](autoscaling.md#deployment-mode).
+    In ==Standard== mode the field accepts 0 for the predictor of a deployment without a transformer on a cluster with KEDA, see [Scale to zero when idle](autoscaling.md#scale-to-zero-when-idle).
 
 <p align="center">
   <figure>
@@ -26471,7 +27432,7 @@ Once you are done with the changes, click on `Create new deployment` at the bott
 
 ## Autoscaling
 
-Deployments can be configured to automatically scale the number of replicas, on traffic in Knative mode and on CPU or memory utilization in Standard mode.
+Deployments can be configured to automatically scale the number of replicas: on request traffic in Knative mode, and on CPU or memory utilization, the request metrics or the vLLM engine metrics in Standard mode.
 To learn about the different autoscaling parameters, see the [Autoscaling Guide](autoscaling.md).
 
 ================================================================================
@@ -26486,8 +27447,8 @@ This guide explains how to set up **autoscaling** for model deployments using ei
 
 Autoscaling enables the deployment to use resources more efficiently, by growing and shrinking the allocated resources according to its actual, real-time usage.
 
-How a deployment scales depends on the mode it runs in.
-See [Deployment mode](#deployment-mode), [Scale metrics](#scale-metrics) and [Scaling parameters](#scaling-parameters) for details on the available scaling options in each mode.
+How a deployment scales depends on the mode it runs in and, in Standard mode, on the autoscaler the cluster provides.
+See [Deployment mode](#deployment-mode), [Scale metrics](#scale-metrics), [Scaling parameters](#scaling-parameters) and [Scale to zero when idle](#scale-to-zero-when-idle) for the available scaling options.
 
 ## Web UI
 
@@ -26522,9 +27483,24 @@ To navigate to the advanced creation form, click on `Advanced options`.
 
 In the `Autoscaling` section of the advanced form, you can configure the scaling parameters for the predictor and/or the transformer (if available).
 The `Knative` checkbox at the top of the section selects the [deployment mode](#deployment-mode) and decides which of the fields below are shown.
-With it checked, you can set the scale metric, target value, minimum and maximum instances, as well as the panic and stable window parameters.
-With it cleared, the deployment runs in Standard mode and you can set the minimum and maximum instances plus a CPU or memory scale metric and its target.
+It starts unchecked, so a new deployment runs in Standard mode unless you check it.
 The checkbox is disabled while the deployment is running, because the mode of a running deployment cannot be changed.
+
+With the checkbox cleared, the deployment runs in Standard mode and the form shows the fields of the autoscaler the cluster provides.
+Its tooltip names the one in effect: KEDA where the cluster has it, KServe's own Horizontal Pod Autoscaler (HPA) otherwise.
+
+- The minimum and maximum instances.
+  A minimum of **0** means scale to zero when idle, see [Scale to zero when idle](#scale-to-zero-when-idle).
+  The field accepts 0 for the predictor of a deployment without a transformer on a cluster with KEDA.
+  Equal minimum and maximum run a fixed number of instances with no autoscaler.
+- The scale metric and its target.
+  Under KEDA, a vLLM predictor can scale on the engine metrics (queue depth, KV-cache usage, running requests, queue time, time to first token, request latency) and any other predictor without a transformer on the concurrent requests or requests per second at the gateway, next to CPU and memory.
+  The target field relabels itself for the chosen metric.
+- Under KEDA, the scale-down and scale-up stabilization windows (empty means the cluster default) and one additional scale metric with its target.
+- With a minimum of 0, the idle cooldown and the cold-start timeout.
+  A vLLM deployment shows a warning, because the model reloads on every wake.
+
+With the checkbox checked, the deployment runs in Knative mode and you can set the scale metric (concurrent requests or requests per second), the target value, the minimum and maximum instances, and the panic and stable window parameters.
 
 <p align="center">
   <figure>
@@ -26541,6 +27517,10 @@ The checkbox is disabled while the deployment is running, because the mode of a 
 </p>
 
 Once you are done with the changes, click on `Create new deployment` at the bottom of the page to create the deployment for your model.
+
+!!! note "Deployments stored before KEDA was installed"
+    A Standard-mode deployment created on a cluster that then gets KEDA keeps its CPU or memory threshold, and KEDA runs it on its next save or start.
+    The edit form shows a note when a stored configuration still names KServe's HPA on a cluster that has KEDA, since saving moves it to KEDA.
 
 ## Code
 
@@ -26564,8 +27544,55 @@ Once you are done with the changes, click on `Create new deployment` at the bott
 ### Step 2: Define the predictor scaling configuration
 
 You can use the [`PredictorScalingConfig`][hsml.scaling_config.PredictorScalingConfig] class to configure the scaling options according to your preferences.
-Default values for scaling metrics and parameters are listed in the [Scale metrics](#scale-metrics) and [Scaling parameters](#scaling-parameters) sections above.
+Default values for scaling metrics and parameters are listed in the [Scale metrics](#scale-metrics) and [Scaling parameters](#scaling-parameters) sections below.
 Make sure the metric and parameters you set are valid for the [deployment mode](#deployment-mode) you deploy in.
+
+=== "Standard mode (KEDA)"
+
+    ```python
+    from hsml.scaling_config import PredictorScalingConfig, ScaleMetric
+
+
+    # scale on the requests in flight, measured at the gateway,
+    # and rest at zero when idle
+    predictor_scaling = PredictorScalingConfig(
+        min_instances=0,
+        max_instances=5,
+        scale_metric=ScaleMetric.CONCURRENCY,
+        target=20,
+        scale_down_stabilization_window_seconds=120,
+        idle_cooldown_seconds=300,
+        cold_start_timeout_seconds=120,
+    )
+    ```
+
+=== "Standard mode (vLLM engine metrics)"
+
+    ```python
+    from hsml.scaling_config import PredictorScalingConfig, ScaleMetric
+
+
+    # add an instance when more than 8 requests are being generated
+    # per instance, or when the KV cache passes 80%, whichever comes first
+    predictor_scaling = PredictorScalingConfig(
+        min_instances=1,
+        max_instances=2,
+        scale_metric=ScaleMetric.RUNNING_REQUESTS,
+        target=8,
+        additional_scale_metrics=[(ScaleMetric.KV_CACHE_USAGE, 80)],
+    )
+    ```
+
+=== "Standard mode (CPU)"
+
+    ```python
+    from hsml.scaling_config import PredictorScalingConfig
+
+
+    predictor_scaling = PredictorScalingConfig(
+        min_instances=1, max_instances=5, scale_metric="CPU", target=80
+    )
+    ```
 
 === "Knative mode"
 
@@ -26578,32 +27605,11 @@ Make sure the metric and parameters you set are valid for the [deployment mode](
     )
     ```
 
-=== "Standard mode"
-
-    ```python
-    from hsml.scaling_config import PredictorScalingConfig
-
-
-    predictor_scaling = PredictorScalingConfig(
-        min_instances=1, max_instances=5, scale_metric="CPU", target=80
-    )
-    ```
-
 ### Step 3 (Optional): Define the transformer scaling configuration
 
 If a transformer script is also provided, you can use the [`TransformerScalingConfig`][hsml.scaling_config.TransformerScalingConfig] class to configure the scaling options according to your preferences.
-Default values for scaling metrics and parameters are listed in the [Scale metrics](#scale-metrics) and [Scaling parameters](#scaling-parameters) sections above.
-
-=== "Knative mode"
-
-    ```python
-    from hsml.scaling_config import TransformerScalingConfig
-
-
-    transformer_scaling = TransformerScalingConfig(
-        min_instances=1, max_instances=3, scale_metric="CONCURRENCY", target=50
-    )
-    ```
+Default values for scaling metrics and parameters are listed in the [Scale metrics](#scale-metrics) and [Scaling parameters](#scaling-parameters) sections below.
+In Standard mode a transformer scales on CPU or memory and keeps at least one instance; the request metrics and scale to zero are for a predictor without a transformer.
 
 === "Standard mode"
 
@@ -26616,25 +27622,18 @@ Default values for scaling metrics and parameters are listed in the [Scale metri
     )
     ```
 
-### Step 4: Create a deployment with the scaling configuration
-
 === "Knative mode"
 
     ```python
-    my_model = mr.get_model("my_model", version=1)
+    from hsml.scaling_config import TransformerScalingConfig
 
-    # optional
-    my_transformer = ms.create_transformer(
-        script_file="Resources/my_transformer.py",
-        scaling_configuration=transformer_scaling,
-    )
 
-    my_deployment = my_model.deploy(
-        scaling_configuration=predictor_scaling,
-        # optional:
-        transformer=my_transformer,
+    transformer_scaling = TransformerScalingConfig(
+        min_instances=1, max_instances=3, scale_metric="CONCURRENCY", target=50
     )
     ```
+
+### Step 4: Create a deployment with the scaling configuration
 
 === "Standard mode"
 
@@ -26649,7 +27648,25 @@ Default values for scaling metrics and parameters are listed in the [Scale metri
 
     my_deployment = my_model.deploy(
         scaling_configuration=predictor_scaling,
-        knative_mode=False,
+        # optional:
+        transformer=my_transformer,
+    )
+    ```
+
+=== "Knative mode"
+
+    ```python
+    my_model = mr.get_model("my_model", version=1)
+
+    # optional
+    my_transformer = ms.create_transformer(
+        script_file="Resources/my_transformer.py",
+        scaling_configuration=transformer_scaling,
+    )
+
+    my_deployment = my_model.deploy(
+        scaling_configuration=predictor_scaling,
+        knative_mode=True,
         # optional:
         transformer=my_transformer,
     )
@@ -26657,8 +27674,12 @@ Default values for scaling metrics and parameters are listed in the [Scale metri
 
 !!! note "Match the scaling configuration to the mode"
     The `knative_mode` argument selects the [deployment mode](#deployment-mode) of the deployment.
-    Leaving it unset deploys in Knative mode for every model server except vLLM, so a Standard scaling configuration needs `knative_mode=False` passed explicitly.
+    Leaving it unset deploys in Standard mode for every model server, so a Knative scaling configuration needs `knative_mode=True` passed explicitly.
     A scaling configuration that uses fields the chosen mode does not support is rejected, so set both together.
+
+!!! tip "Read the configuration back"
+    The backend fills in the defaults and settles the configuration on every start and save.
+    `my_deployment.save()` updates the object with what was stored, but `my_deployment.start()` only refreshes the state, so fetch the deployment again (`ms.get_deployment("my_deployment")`) and call `predictor.scaling_configuration.describe()` on it to see the configuration the deployment follows.
 
 !!! api "API reference"
 
@@ -26672,70 +27693,167 @@ Default values for scaling metrics and parameters are listed in the [Scale metri
 ## Deployment mode
 
 Every deployment runs on KServe in one of two modes.
-In ==Knative== mode, the deployment is backed by a Knative service that scales on request traffic and can scale to zero.
-In ==Standard== mode, the deployment is backed by a plain Kubernetes Deployment that always keeps at least one instance running and scales on CPU or memory utilization.
+In ==Standard== mode, the deployment is backed by a plain Kubernetes Deployment and an autoscaler the cluster provides: KEDA where it is installed, KServe's own HPA otherwise.
+In ==Knative== mode, the deployment is backed by a Knative service that scales on request traffic.
 Inference requests reach both modes through the same Istio endpoint, so the mode does not change how you send predictions to a deployment.
 
-!!! info "Knative and Standard mode"
+!!! info "Standard and Knative mode"
 
-    | Mode     | Backed by             | Scale-to-zero | Autoscaler                                                                                   |
-    | -------- | --------------------- | ------------- | -------------------------------------------------------------------------------------------- |
-    | Knative  | Knative service       | Yes           | [Knative Pod Autoscaler (KPA)](https://knative.dev/docs/serving/autoscaling/)                 |
-    | Standard | Kubernetes Deployment | No            | [Kubernetes HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) |
+    | Mode     | Backed by             | Autoscaler                                                                                                                                                                            | Scale-to-zero                                                                        |
+    | -------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+    | Standard | Kubernetes Deployment | [KEDA](https://keda.sh/docs/latest/concepts/) where the cluster has it (the default), else [Kubernetes HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) | With KEDA, for a predictor without a transformer, through the KEDA HTTP add-on        |
+    | Knative  | Knative service       | [Knative Pod Autoscaler (KPA)](https://knative.dev/docs/serving/autoscaling/)                                                                                                           | Yes                                                                                  |
 
-LLM deployments default to Standard mode, and deployments on every other model server default to Knative mode.
-LLMs load large model files and start slowly, so scaling them to zero costs a long cold start on the next request, and their throughput is bounded by GPU memory rather than by the number of concurrent requests.
+A new deployment runs in Standard mode for every model server; Knative mode is the opt-in.
+An update that leaves the mode unset keeps the stored one.
 
 The two modes are backed by different Kubernetes resources, so the mode of a deployment cannot be changed while it is running.
 Stop the deployment, change the mode, and start it again.
 Switching the mode clears the scaling settings that do not carry over and re-derives the defaults of the new mode.
 
+### Standard-mode autoscaler
+
+Where the cluster has KEDA, every Standard-mode deployment is scaled by KEDA: on CPU and memory utilization, on the request metrics measured at the gateway by the KEDA HTTP add-on, or on the vLLM engine metrics, with scale to zero when idle.
+KEDA is installed by the Hopsworks Helm chart by default, see [KEDA values][helm-values-hw-keda].
+A cluster without KEDA falls back to KServe's HPA, which scales on CPU and memory utilization only, always keeps at least one instance, and takes none of the KEDA settings.
+
+The Python SDK exposes the choice as the `autoscaler` argument (`Autoscaler.KEDA` or `Autoscaler.HPA`).
+Leaving it unset picks KEDA where it is installed, so there is normally no need to set it; the UI shows no selector and names the autoscaler in effect.
+KServe's HPA is kept as the fallback for clusters without KEDA and will be retired.
+
 !!! tip "Python SDK"
     From the Python SDK, the mode is selected with the `knative_mode` keyword
     argument: `True` for Knative mode, `False` for Standard mode.
-    Leaving it unset uses the default for the model server when creating a deployment,
+    Leaving it unset uses Standard mode when creating a deployment,
     and keeps the stored mode when updating one.
     See [`Model.deploy()`][hsml.model.Model.deploy] in the API reference.
 
 ## Scale metrics
 
-The metric a deployment can scale on depends on its [deployment mode](#deployment-mode), because the two modes are driven by different autoscalers.
-Setting a metric that the mode does not support is rejected.
+The metric a deployment can scale on depends on its [deployment mode](#deployment-mode), its autoscaler and its model server.
+Setting a metric that the deployment cannot scale on is rejected.
+Target values are per instance.
 
-| Scale Metric | Mode     | Default Target | Description                     |
-| ------------ | -------- | -------------- | ------------------------------- |
-| RPS          | Knative  | 200            | Requests per second per replica |
-| CONCURRENCY  | Knative  | 100            | Concurrent requests per replica |
-| CPU          | Standard | 80             | CPU utilization percentage      |
-| MEMORY       | Standard | 80             | Memory utilization percentage   |
+| Scale Metric          | Measures                                                       | Default Target | Standard (KEDA)                   | Standard (HPA) | Knative | Model servers              |
+| --------------------- | -------------------------------------------------------------- | -------------- | --------------------------------- | -------------- | ------- | -------------------------- |
+| `CPU`                 | CPU utilization, percentage of the request                     | 80             | Yes                               | Yes            | No      | All                        |
+| `MEMORY`              | Memory utilization, percentage of the request                  | 80             | Yes                               | Yes            | No      | All                        |
+| `CONCURRENCY`         | Concurrent requests, counted at the gateway                    | 100            | Predictor without a transformer   | No             | Yes     | Standard: all but vLLM     |
+| `RPS`                 | Requests per second, counted at the gateway                    | 200            | Predictor without a transformer   | No             | Yes     | Standard: all but vLLM     |
+| `QUEUE_DEPTH`         | Requests waiting in the engine (`vllm:num_requests_waiting`)   | 5              | Yes                               | No             | No      | vLLM                       |
+| `KV_CACHE_USAGE`      | KV-cache in use, percentage (`vllm:kv_cache_usage_perc`)       | 80             | Yes                               | No             | No      | vLLM                       |
+| `RUNNING_REQUESTS`    | Requests being generated (`vllm:num_requests_running`)         | 32             | Yes                               | No             | No      | vLLM                       |
+| `QUEUE_TIME`          | Average queue time over the last minute, ms                    | 1000           | Yes                               | No             | No      | vLLM                       |
+| `TIME_TO_FIRST_TOKEN` | Average time to first token over the last minute, ms           | 2000           | Yes                               | No             | No      | vLLM                       |
+| `REQUEST_LATENCY`     | Average end-to-end request latency over the last minute, ms    | 10000          | Yes                               | No             | No      | vLLM                       |
 
-Knative deployments default to `CONCURRENCY`.
+When no metric is set on a range of instances, a vLLM predictor scales on `QUEUE_DEPTH` under KEDA, every other Standard-mode component on `CPU`, and a Knative component on `CONCURRENCY`.
 See [Knative autoscaling metrics](https://knative.dev/docs/serving/autoscaling/autoscaling-metrics/) for more details on the Knative metrics.
 
-Standard deployments default to `CPU`, and scale between the minimum and maximum instances.
 Setting the minimum and maximum instances to the same value runs a fixed number of replicas instead, with no autoscaler and no scale metric.
-LLM deployments default to a fixed replica count, because every extra replica needs a GPU and GPU-bound pods scale poorly on CPU or memory utilization.
+LLM deployments default to a fixed replica count, because every extra replica needs a GPU.
+
+!!! info "How KEDA sizes the deployment"
+    KEDA runs replicas = ceil(metric value / target).
+    The engine metrics are summed over the instances, and the latency metrics are multiplied by the number of instances, so a latency metric grows and shrinks the deployment in proportion to how far the average sits from its target.
+    The request metrics count at the gateway: traffic sent straight to the predictor Service from inside the cluster is invisible to them, and to scale to zero.
 
 ## Scaling parameters
 
 The following parameters can be used to fine-tune the autoscaling behavior.
+
+| Parameter      | Mode | Default | Range | Description                                                                                                          |
+| -------------- | ---- | ------- | ----- | -------------------------------------------------------------------------------------------------------------------- |
+| `minInstances` | Both | n/a     | ≥ 0   | Minimum replicas; 0 is [scale to zero when idle](#scale-to-zero-when-idle)                                           |
+| `maxInstances` | Both | n/a     | ≥ 1   | Maximum replicas (cannot be less than min)                                                                           |
+
+### KEDA parameters
+
+These apply to a Standard-mode deployment scaled by KEDA.
+They are rejected under KServe's HPA, which ignores them, and in Knative mode.
+
+| Parameter                             | Default                     | Range  | Description                                                                                                                |
+| ------------------------------------- | --------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `scaleDownStabilizationWindowSeconds` | cluster default (300)       | 0–3600 | How long the metric must stay below target before instances are removed                                                    |
+| `scaleUpStabilizationWindowSeconds`   | cluster default (0)         | 0–3600 | How long the metric must stay above target before instances are added                                                      |
+| `additionalScaleMetrics`              | none                        | n/a    | Further metric and target pairs; the most demanding one decides the count. At most one request metric per deployment       |
+| `idleCooldownSeconds`                 | 300                         | 0–3600 | With a minimum of 0: seconds without a request before every instance is removed, independently of the stabilization window |
+| `coldStartTimeoutSeconds`             | 600                         | 1–3600 | With a minimum of 0: how long the first request is held while the deployment wakes                                         |
+
+The cluster defaults of the stabilization windows are set by the administrator in the Helm chart (`kserve.kserve.autoscaler.scaleDownStabilizationWindowSeconds` and `kserve.kserve.autoscaler.scaleUpStabilizationWindowSeconds`, see [KServe values][helm-values-kserve]); empty means the Kubernetes HPA defaults.
+
+### Knative parameters
+
+These apply to a deployment in Knative mode and are rejected in Standard mode.
 See [scale bounds](https://knative.dev/docs/serving/autoscaling/scale-bounds/), [autoscaling concepts](https://knative.dev/docs/serving/autoscaling/autoscaling-concepts/) and [scale-to-zero](https://knative.dev/docs/serving/autoscaling/scale-to-zero/) in the Knative documentation for more details.
 
-| Parameter                     | Mode    | Default | Range  | Description                                                   |
-| ----------------------------- | ------- | ------- | ------ | ------------------------------------------------------------- |
-| `minInstances`                | Both    | n/a     | ≥ 0    | Minimum replicas (0 enables scale-to-zero, Knative mode only) |
-| `maxInstances`                | Both    | n/a     | ≥ 1    | Maximum replicas (cannot be less than min)                    |
-| `panicWindowPercentage`       | Knative | 10.0    | 1–100  | Panic window as percentage of stable window                   |
-| `stableWindowSeconds`         | Knative | 60      | 6–3600 | Stable window duration in seconds                             |
-| `panicThresholdPercentage`    | Knative | 200.0   | > 0    | Traffic threshold to trigger panic mode                       |
-| `scaleToZeroRetentionSeconds` | Knative | 0       | ≥ 0    | Time to retain pods before scaling to zero                    |
-
-The panic, stable window and scale-to-zero retention parameters are Knative Pod Autoscaler settings with no equivalent in a Kubernetes HPA, so a Standard deployment rejects them.
-A Standard deployment also requires at least one instance.
+| Parameter                     | Default | Range  | Description                                 |
+| ----------------------------- | ------- | ------ | ------------------------------------------- |
+| `panicWindowPercentage`       | 10.0    | 1–100  | Panic window as percentage of stable window |
+| `stableWindowSeconds`         | 60      | 6–3600 | Stable window duration in seconds           |
+| `panicThresholdPercentage`    | 200.0   | > 0    | Traffic threshold to trigger panic mode     |
+| `scaleToZeroRetentionSeconds` | 0       | ≥ 0    | Time to retain pods before scaling to zero  |
 
 !!! note "Cluster-level constraints"
-    ==Administrators== can set cluster-wide limits on the maximum and minimum number of instances.
+    ==Administrators== can set cluster-wide limits on the maximum and minimum number of instances (`kube_serving_max_num_instances` and `kube_serving_min_num_instances`).
     When the minimum is set to 0, scale-to-zero is enforced for all Knative deployments.
+    Whether Standard-mode deployments are scaled by KEDA follows `kube_keda_installed`, which the Helm chart sets when it installs KEDA (on by default), see [Cluster Configuration][cluster-configuration].
+
+## Scale to zero when idle
+
+A minimum of **0** instances means scale to zero when idle, in both modes.
+The deployment runs at least one instance while it serves requests, scales between one and the maximum on its metric, and removes all its instances after a period without requests.
+The next request wakes it: the request is held while an instance starts and is answered once the instance is ready, so expect a cold start on the first request after an idle period.
+A deployment at zero instances reports the `IDLE` status, see [Deployment State](deployment-state.md).
+
+- In **Knative** mode, Knative's autoscaler decides to scale to zero once its stable window (60 seconds by default) has seen no traffic, keeps the last pod for `scaleToZeroRetentionSeconds` beyond that, and holds the next request while a pod starts.
+- In **Standard** mode, the KEDA HTTP add-on fronts the deployment.
+  Its interceptor counts the requests to the deployment, KEDA removes every instance once `idleCooldownSeconds` have passed without one, and the interceptor holds the next request for up to `coldStartTimeoutSeconds` while an instance starts and passes its readiness probe.
+  The idle cooldown is independent of the scale-down stabilization window: once it expires, KEDA scales straight to zero, however many instances are running.
+  This requires KEDA on the cluster and a predictor without a transformer.
+  A fresh deployment gets a grace period before it may scale to zero, the larger of the idle cooldown and the cold-start timeout, so a long image pull or model load does not end in an immediate scale-down.
+
+Through the SDK the minimum is 1 unless set, so pass `min_instances=0` for scale to zero.
+The UI defaults a new deployment to a minimum of 0 wherever it can scale to zero.
+A minimum of 0 with a maximum of 1 is one instance while active and zero when idle.
+
+!!! warning "LLM cold starts"
+    An LLM deployment reloads its weights into the GPU on every wake, so the first request after an idle period takes as long as the deployment's first start.
+    Set `coldStartTimeoutSeconds` above the model's load time; a request held longer than the timeout fails.
+    Keep a minimum of 1 for anything with a strict latency objective.
+
+!!! info "Send requests through the endpoint"
+    Scale to zero and the request metrics are measured at the gateway.
+    Use the deployment's endpoint (`deployment.predict()`, the inference URL, or the OpenAI-compatible URL of a vLLM deployment).
+    Traffic sent straight to the predictor Service from inside the cluster never reaches the interceptor and the deployment scales to zero underneath it.
+
+## Rejected configurations
+
+A scaling configuration is validated on create, save and start.
+The request fails with a message naming the rule when it:
+
+- sets a minimum of 0 in Standard mode under KServe's HPA, or on a cluster without KEDA;
+- sets a minimum of 0, or a request metric (`CONCURRENCY`, `RPS`), on a Standard-mode deployment with a transformer;
+- sets `CONCURRENCY` or `RPS` on a vLLM deployment in Standard mode, or an engine metric on another model server;
+- sets the KEDA parameters under KServe's HPA, the Knative parameters in Standard mode, or an `autoscaler` in Knative mode;
+- sets a maximum of 0, or a maximum below the minimum.
+
+## When a deployment does not scale
+
+- **The configuration is not what was sent.**
+  Read it back, see the tip above.
+  A metric on a fixed replica count is cleared, and raising the minimum from 0 drops the idle timeouts.
+- **The metric does not see the load.**
+  Request metrics and scale to zero count at the gateway, so send load through the endpoint.
+  Utilization metrics are a percentage of the resource *request*, not the limit: a predictor requesting 2 cores that uses 1 sits at 50%.
+- **The maximum is already reached**, by the deployment's own maximum or the administrator's limit; a second vLLM instance also needs a second free GPU.
+- **Scale-in waits.**
+  While the deployment is active, KEDA waits for the scale-down stabilization window after the metric drops and KServe's HPA for its own 5-minute window.
+  Scale to zero follows its own clock: the idle cooldown after the last request, after which KEDA removes every instance at once; a fresh deployment also gets the initial grace period.
+- **It does not wake.**
+  The cold start must finish within `coldStartTimeoutSeconds`, which for an LLM means the full weight load.
+  The deployment's Grafana dashboards, linked from the deployment overview, show the instance count, the KEDA trigger values and the request and engine panels.
+  See the [Troubleshooting guide](troubleshooting.md) for the deployment logs.
 
 ================================================================================
 # Scheduling
@@ -28625,6 +29743,7 @@ The entrypoint links to the file in the repository at that commit.
 
 The file below shows a simple agent program that uses LlamaIndex, FastAPI,
 and OpenTelemetry.
+The deployment runs the file with `python`, so the file is the server: it listens on port 8080, answers the readiness probe on `/`, and serves `/predict` and `/v1/models/<name>:predict`, the two paths a prediction request arrives on.
 
 Set `ANTHROPIC_API_KEY` in the deployment environment. Hopsworks injects the
 `OTEL_EXPORTER_OTLP_*` environment variables for the deployment, so the
@@ -28722,6 +29841,28 @@ FastAPIInstrumentor.instrument_app(
     agent_app,
     tracer_provider=predictor.tracer_provider,
 )
+
+
+@agent_app.get("/")
+def ready():
+    return {"status": "ok"}
+
+
+def predict_instances(payload: dict):
+    instances = payload.get("instances", [payload])
+    return {"predictions": [predictor.predict(i) for i in instances]}
+
+
+# Where the Hopsworks inference endpoint forwards a request.
+@agent_app.post("/predict")
+def predict(payload: dict):
+    return predict_instances(payload)
+
+
+# KServe's path, which deployment.predict() uses inside the cluster.
+@agent_app.post("/v1/models/{target}")
+def kserve_predict(target: str, payload: dict):
+    return predict_instances(payload)
 
 
 @agent_app.post("/query")
@@ -30408,8 +31549,12 @@ See [Cluster Configuration][cluster-configuration] for how to view and change th
 | `kube_hopsworks_user` | String | `hopsworks` | Settings.java |
 | `kube_image_builder_service_account` | String | `image-builder` | Settings.java |
 | `kube_img_pull_policy` | String | `Always` | Settings.java |
+| `kube_keda_http_interceptor_address` | String | *(empty string)* | Settings.java |
+| `kube_keda_http_scaler_address` | String | *(empty string)* | Settings.java |
+| `kube_keda_installed` | Boolean | `false` | Settings.java |
 | `kube_keystore_key` | String | `adminpw` | Settings.java |
 | `kube_keystore_path` | String | `/srv/hops/certs-dir/kube/hopsworks/hopsworks__kstore.jks` | Settings.java |
+| `kube_knative_domain_name` | String | `hopsworks.ai` | Settings.java |
 | `kube_knative_lb_domain` | String | *(empty string)* | Settings.java |
 | `kube_kserve_installed` | Boolean | `false` | Settings.java |
 | `kube_kserve_tensorflow_version` | String | *(empty string)* | Settings.java |
@@ -35560,6 +36705,22 @@ _The values table is generated from the Hopsworks Helm chart during the document
 <!-- END GENERATED VALUES -->
 
 ================================================================================
+# hw-keda
+Source: https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hw-keda/
+
+# KEDA values { #helm-values-hw-keda }
+
+Values under `hw-keda` configure KEDA and its HTTP add-on, the autoscaler of Standard-mode model deployments: it scales them on CPU and memory, on the requests at the gateway and on the vLLM engine metrics, and scales them to zero when idle.
+The subchart is installed when `hopsworks.variables.kube_keda_installed` is true (the default), which also tells the Hopsworks backend to offer KEDA-backed scaling; without it, Standard-mode deployments fall back to KServe's own Horizontal Pod Autoscaler on CPU and memory.
+See [How To Configure Scaling For A Deployment][how-to-configure-scaling-for-a-deployment] for what deployments can do with it.
+
+<!-- BEGIN GENERATED VALUES -->
+
+_The values table is generated from the Hopsworks Helm chart during the documentation build._
+
+<!-- END GENERATED VALUES -->
+
+================================================================================
 # hw-kueue
 Source: https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hw-kueue/
 
@@ -35621,7 +36782,7 @@ Source: https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_va
 
 # KServe values { #helm-values-kserve }
 
-Values under `kserve` configure KServe and Knative Serving, which run model deployments.
+Values under `kserve` configure KServe and Knative Serving, which run model deployments, including the cluster defaults for the stabilization windows of Standard-mode deployments scaled by KEDA (`kserve.kserve.autoscaler`, see [KEDA values][helm-values-hw-keda]).
 
 <!-- BEGIN GENERATED VALUES -->
 
@@ -37626,6 +38787,11 @@ Source: https://docs.hopsworks.ai/latest/python-api/hsfs/storage_connector/
       heading_level: 2
       show_root_heading: true
 
+::: hsfs.storage_connector.ElasticsearchConnector
+    options:
+      heading_level: 2
+      show_root_heading: true
+
 ::: hsfs.storage_connector.GcsConnector
     options:
       heading_level: 2
@@ -38171,6 +39337,11 @@ Source: https://docs.hopsworks.ai/latest/python-api/hsml/scaling_config/
       heading_level: 1
       members: false
       show_root_full_path: true
+      show_root_heading: true
+
+::: hsml.scaling_config.Autoscaler
+    options:
+      heading_level: 2
       show_root_heading: true
 
 ::: hsml.scaling_config.ComponentScalingConfig

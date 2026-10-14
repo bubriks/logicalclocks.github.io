@@ -213,6 +213,7 @@
 
 #### Terminal
 - [Browser Terminal](https://docs.hopsworks.ai/latest/user_guides/compute/terminal/) ([md](https://docs.hopsworks.ai/latest/user_guides/compute/terminal/index.md))
+- [Start the Terminal](https://docs.hopsworks.ai/latest/user_guides/projects/terminal/start/) ([md](https://docs.hopsworks.ai/latest/user_guides/projects/terminal/start/index.md))
 - [Teleport Sessions](https://docs.hopsworks.ai/latest/user_guides/projects/terminal/teleport/) ([md](https://docs.hopsworks.ai/latest/user_guides/projects/terminal/teleport/index.md))
 
 #### Jobs
@@ -375,6 +376,7 @@
 - [hopsfs](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hopsfs/) ([md](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hopsfs/index.md))
 - [hopsfs-csi](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hopsfs-csi/) ([md](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hopsfs-csi/index.md))
 - [hopsworks](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hopsworks/) ([md](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hopsworks/index.md))
+- [hw-keda](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hw-keda/) ([md](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hw-keda/index.md))
 - [hw-kueue](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hw-kueue/) ([md](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hw-kueue/index.md))
 - [hw-kyverno](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hw-kyverno/) ([md](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/hw-kyverno/index.md))
 - [judge](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/judge/) ([md](https://docs.hopsworks.ai/latest/setup_installation/common/helm_chart_values/judge/index.md))
