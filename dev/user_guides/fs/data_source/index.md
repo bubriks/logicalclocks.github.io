@@ -58,6 +58,14 @@ Cloud agnostic storage systems:
 
     [:octicons-arrow-right-24: Configure][data-source-sap-hana]
 
+- :material-server-network:{ .lg .middle style="color:var(--hops-accent-text)" } **Hopsworks**
+
+    ---
+
+    Read and ingest feature groups from another Hopsworks cluster.
+
+    [:octicons-arrow-right-24: Configure][data-source-hopsworks]
+
 - :material-database:{ .lg .middle style="color:var(--hops-accent-text)" } **JDBC**
 
     ---
@@ -81,6 +89,14 @@ Cloud agnostic storage systems:
     Connect to supported CRM, sales, and analytics platforms.
 
     [:octicons-arrow-right-24: Configure](creation/crm_sales_analytics.md)
+
+- :simple-gmail:{ .lg .middle style="color:#EA4335" } **Gmail**
+
+    ---
+
+    Copy a mailbox into a Delta feature group with a scheduled sync job.
+
+    [:octicons-arrow-right-24: Configure][data-source-gmail]
 
 - :material-folder-network-outline:{ .lg .middle style="color:var(--hops-accent-text)" } **HopsFS**
 

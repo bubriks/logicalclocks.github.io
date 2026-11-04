@@ -35,12 +35,32 @@
       heading_level: 2
       show_root_heading: true
 
+::: hsfs.storage_connector.GmailAccessToken
+    options:
+      heading_level: 2
+      show_root_heading: true
+
+::: hsfs.storage_connector.GmailConnector
+    options:
+      heading_level: 2
+      show_root_heading: true
+
+::: hsfs.storage_connector.GmailSyncJobConfig
+    options:
+      heading_level: 2
+      show_root_heading: true
+
 ::: hsfs.storage_connector.GoogleSheetsConnector
     options:
       heading_level: 2
       show_root_heading: true
 
 ::: hsfs.storage_connector.HopsFSConnector
+    options:
+      heading_level: 2
+      show_root_heading: true
+
+::: hsfs.storage_connector.HopsworksConnector
     options:
       heading_level: 2
       show_root_heading: true
@@ -71,6 +91,11 @@
       show_root_heading: true
 
 ::: hsfs.storage_connector.SapHanaConnector
+    options:
+      heading_level: 2
+      show_root_heading: true
+
+::: hsfs.storage_connector.SharePointConnector
     options:
       heading_level: 2
       show_root_heading: true
