@@ -13,7 +13,7 @@ The commands assume Hopsworks is installed in the `hopsworks` namespace.
 | ------- | ---------- | ----------------- |
 | [5.0.x to 5.1.x][upgrade-50-to-51] | 1.3.x to 2.19.x | Kubernetes 1.34 or later before the upgrade, a first Helm 4 upgrade, and from 5.0.13 or earlier to 5.1.2 or later [the Trino query history][upgrade-trino-query-history]. |
 | [5.1.x to 5.2.x][upgrade-51-to-52] | 2.19.x to 3.8.0: upgrade to 5.2.1 or later | The index pass, Kafka moves to KRaft, KEDA, Kubernetes 1.37 only afterwards, Trino, from 5.2.2 [OnlineFS and the schema migrations][upgrade-changes-from-522], and from 5.2.3 with your own image registry [the Envoy image of Python apps][upgrade-changes-from-523]. |
-| [5.2.x to 5.3.x][upgrade-52-to-53] | stays on 3.8.0 | [Strimzi 1.3][upgrade-strimzi-13] with central before its satellites, ICEBERG feature groups in Trino, the Filebeat registry, with your own pipelines, outputs or plugins [Logstash 9][upgrade-logstash-9], the memory of the OTLP sidecar of agent deployments, [Envoy Gateway][upgrade-envoy-gateway] when turned on, with an external Kafka [the topics Hopsworks creates and deletes on it][upgrade-byok-topics], [notification topics and shared feature stores][upgrade-notification-topics], from 5.2.0 [the subset shares in Trino][upgrade-trino-subset-shares] and the OpenSearch security configuration, and from 5.2.0 or 5.2.1 [OnlineFS and the schema migrations][upgrade-changes-from-522]. |
+| [5.2.x to 5.3.x][upgrade-52-to-53] | stays on 3.8.0 | [Additional prerequisites][upgrade-additional-prerequisites], [Strimzi 1.3][upgrade-strimzi-13] with central before its satellites, ICEBERG feature groups in Trino, the Filebeat registry, with your own pipelines, outputs or plugins [Logstash 9][upgrade-logstash-9], the memory of the OTLP sidecar of agent deployments, [Envoy Gateway][upgrade-envoy-gateway] and [LLM Gateway][upgrade-llm-gateway] when turned on, with an external Kafka [the topics Hopsworks creates and deletes on it][upgrade-byok-topics], [notification topics and shared feature stores][upgrade-notification-topics], from 5.2.0 [the subset shares in Trino][upgrade-trino-subset-shares] and the OpenSearch security configuration, and from 5.2.0 or 5.2.1 [OnlineFS and the schema migrations][upgrade-changes-from-522]. |
 
 ## Before every upgrade { #upgrade-before-every-upgrade }
 
@@ -180,32 +180,78 @@ Shares of a whole feature group, and the online and embedding access of a subset
 The upgrade can fail on the `consul-server-acl-init` Job with `spec.template: field is immutable`.
 Delete that Job and run the upgrade again.
 
+### `opensearch-index-upgrade` gets no answer from `elastic.service.consul` { #upgrade-consul-dns-missing }
+
+The upgrade can fail on the `opensearch-index-upgrade` hook with `FATAL: no answer from https://elastic.service.consul:9200`, and fail the same way when it is run again.
+One cause is that the Consul block is missing from the cluster DNS, because something outside the chart has reset the DNS configuration since the last upgrade.
+An update of the EKS CoreDNS add-on with conflict resolution `OVERWRITE` does that.
+Check the `Corefile` before changing anything:
+
+```sh
+kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}'
+```
+
+If it has a `consul` block, the cause is another one: see **No answer from the cluster** under [If the hook fails][opensearch-hook-fails].
+If the block is missing, a chart release with the [CoreDNS configuration hook][upgrade-coredns-hook] puts it back by itself.
+With an earlier release, add it at the end of the `Corefile`, wait a minute for CoreDNS to load it, and run the upgrade again:
+
+```text
+consul {
+  errors
+  cache 30
+  forward . {$CONSUL_SERVER}
+}
+```
+
+This is the form for the default setup, in which the chart configures the cluster DNS through the `coredns` ConfigMap and sets `CONSUL_SERVER` on the CoreDNS Deployment.
+
 ## 5.2.x to 5.3.x { #upgrade-52-to-53 }
 
 OpenSearch stays on 3.8.0.
 An upgrade from 5.2.0 or 5.2.1 also gets the [changes from 5.2.2][upgrade-changes-from-522].
 An upgrade from 5.2.0 also crosses two changes of 5.2.1, described under 5.1.x to 5.2.x: [Feature groups shared with a subset of their features][upgrade-trino-subset-shares], and the OpenSearch [Security configuration][opensearch-security-configuration], which addresses a vulnerability.
 
+### Additional upgrade prerequisites { #upgrade-additional-prerequisites }
+
+The identity running Helm or syncing ArgoCD must have permission to manage `ValidatingAdmissionPolicy` and `ValidatingAdmissionPolicyBinding` resources in the `admissionregistration.k8s.io` API group.
+
+Before upgrading, check that every project namespace carries the label configured by `global._hopsworks.projectPodSecurity.namespaceLabel`, which defaults to `hopsworks.ai/project`:
+
+```bash
+kubectl get namespaces -L hopsworks.ai/project
+```
+
+If you supply project namespaces yourself, set `global._hopsworks.projectPodSecurity.namespaceLabel` to an administrator-managed label key, for example `ops.example.org/hopsworks-project`, and add that label to every project namespace.
+Include it in `hopsworks.variables.project_namespace_labels` so Hopsworks also labels new project namespaces, preserving any existing entries in that setting.
+The `hopsworks.ai/project` label also controls namespace ownership during [uninstallation][uninstalling-hopsworks]; do not add it to a namespace you intend to manage yourself.
+
+For multiple releases on the same Kubernetes cluster, set `global._hopsworks.projectPodSecurity.namespaceMatchLabels` to each release's tenant labels.
+Leaving `namespaceMatchLabels` empty selects every namespace carrying `namespaceLabel`, including projects belonging to other releases.
+Every release must select a distinct set of project namespaces.
+Add these labels to existing and pre-created project namespaces and include them in `hopsworks.variables.project_namespace_labels` before upgrading.
+
+Project pod admission can be turned off with `global._hopsworks.projectPodSecurity.enabled: false`, which skips these prerequisites, but we recommend keeping it on.
+
 ### Strimzi 1.3 { #upgrade-strimzi-13 }
 
-From the 5.2.x patch release that uses Strimzi 1.3, and in 5.3, the chart deploys Strimzi 1.3.0 in place of 1.2.0, and Kafka stays on 4.3.1.
+From the 5.2.x patch release that uses Strimzi 1.3, and in 5.3, the chart deploys Strimzi 1.3.1 in place of 1.2.0, and Kafka stays on 4.3.1.
 An upgrade from a release that already uses Strimzi 1.3 crosses none of this.
 
 - **Upgrade central before its satellites**, the reverse of the order from 5.1.x to 5.2.x.
-  A satellite runs on central's operator, and the 1.2.0 operator would replace the satellite's controller onto the 1.3.0 image without the configuration that image reads, which leaves the satellite's Kafka down until central is upgraded.
+  A satellite runs on central's operator, and the 1.2.0 operator would replace the satellite's controller onto the 1.3.1 image without the configuration that image reads, which leaves the satellite's Kafka down until central is upgraded.
   The satellite's upgrade therefore refuses to start while its Kafka was last reconciled by an older 1.x operator.
-  Upgrade central, wait until the satellite's Kafka reports the 1.3.0 operator, then upgrade the satellite:
+  Upgrade central, wait until the satellite's Kafka reports the 1.3.1 operator, then upgrade the satellite:
 
     ```sh
     kubectl get kafka <cluster> -n <satellite-namespace> -o jsonpath='{.status.operatorLastSuccessfulVersion}'
     ```
 
-  Until its own upgrade, the satellite keeps its pods on the old image under the 1.3.0 operator, and that upgrade replaces each of them once.
+  Until its own upgrade, the satellite keeps its pods on the old image under the 1.3.1 operator, and that upgrade replaces each of them once.
 - **No step before `helm upgrade`.**
-  The `strimzi-crd-upgrade` hook applies the Strimzi 1.3.0 CRDs before the operator is replaced.
+  The `strimzi-crd-upgrade` hook applies the Strimzi 1.3.1 CRDs before the operator is replaced.
 - **The brokers and controllers are replaced once**, by the new operator, for the new image.
   The chart stops the outgoing operator before it starts the new one, through `kafka.strimzi-kafka-operator.deploymentStrategy`, so that the 1.2.0 operator does not act on the new image.
-  A pod the 1.2.0 operator replaces onto the 1.3.0 image lacks the configuration that image reads, and restarts until the new operator takes over.
+  A pod the 1.2.0 operator replaces onto the 1.3.1 image lacks the configuration that image reads, and restarts until the new operator takes over.
   It then recovers on its own, which can take a few minutes, because Kubernetes waits up to five minutes between restarts of a failing container.
   The setting makes that unlikely rather than impossible: nothing waits for the old operator to exit.
   If your values set `kafka.strimzi-kafka-operator.deploymentStrategy.type: Recreate`, also set `rollingUpdate: null` there, or the merged strategy is rejected.
@@ -215,7 +261,55 @@ An upgrade from a release that already uses Strimzi 1.3 crosses none of this.
   Strimzi 1.3 turns its `UseBackgroundPodDeletion` feature gate on by default, so that CNI plugins which remove a pod's network endpoints when its object is deleted, such as Cilium, no longer cut a broker off before it has shut down.
   To keep the earlier foreground deletion, set `kafka.strimzi-kafka-operator.featureGates: "-UseBackgroundPodDeletion"`.
 - **Under ArgoCD, the `ignoreDifferences` entry for the Kafka CRD is no longer needed.**
-  Strimzi 1.3.0's Kafka CRD no longer has the empty map that the entry in [Under ArgoCD][kafka4-argocd] ignores, and the entry matches nothing on it, so it can stay.
+  Strimzi 1.3.1's Kafka CRD no longer has the empty map that the entry in [Under ArgoCD][kafka4-argocd] ignores, and the entry matches nothing on it, so it can stay.
+
+### CoreDNS configuration hook { #upgrade-coredns-hook }
+
+From the 5.2.x patch release that carries this hook, and in 5.3, an upgrade configures the cluster DNS for the Consul domain before its other hooks run.
+The other hooks reach services by their Consul names, so an upgrade used to fail on its first hook when the Consul block was missing from the cluster DNS, as described under [`opensearch-index-upgrade` gets no answer][upgrade-consul-dns-missing].
+The hook is rendered when `consul.autoConfigureCoreDNS` is on, which is the default.
+
+- **What runs.**
+  The `consul-coredns-pre-upgrade` hook runs the same step as the `consul-coredns-autoconf` Job, which still runs after the release is applied.
+  It then waits until `consul.service.consul` has resolved 20 times in a row, for at most 3 minutes, because the CoreDNS pods load a changed configuration one by one.
+  On a cluster whose DNS is in order it changes nothing and adds about 20 seconds.
+- **The hook does not fail the upgrade by itself.**
+  It works with the roles of the previous release, so it cannot follow a change of `consul.corednsConfigMapName` or `consul.corednsDeploymentName` made in the same upgrade; the `consul-coredns-autoconf` Job applies that change afterwards.
+  When the hook cannot read or write the DNS configuration, or the name does not resolve in time, it says so in its log and the upgrade continues.
+  Its Job gives up after 4 minutes, under the 5 minutes Helm waits for a hook by default.
+- **The log says what the hook did.**
+  The Job is kept after it finishes, for one day by default, so that its log can be read:
+
+    ```sh
+    kubectl logs -n hopsworks job/$(kubectl get jobs -n hopsworks -o name --sort-by=.metadata.creationTimestamp | grep consul-coredns-pre-upgrade | tail -n 1 | cut -d/ -f2)
+    ```
+
+  Its lines start with `>> coredns pre-upgrade hook:`.
+
+    | Line | Meaning | What to do |
+    | ---- | ------- | ---------- |
+    | `consul.service.consul resolved 20 times in a row` | The hook did its work. | Nothing. |
+    | `could not read the Service` or `does not exist yet` | The hook could not find the Consul DNS Service and left the DNS configuration alone. | Nothing, unless a later hook fails on a Consul name: then check that Service and run the upgrade again. |
+    | `configure-dns.sh ended with status` | The hook could not read or write the DNS configuration; the error is above that line. | Nothing in an upgrade that changes one of the two names above. Otherwise check the Role `consul-autoconfigcoredns-update-dns-role` in `kube-system` and those two values. |
+    | `did not resolve 20 times in a row` | Consul names do not resolve reliably yet. | If a later hook fails on a Consul name, check the endpoints of the Consul DNS Service, the Consul server pods and the logs of the CoreDNS pods, then run the upgrade again. |
+
+- **When the hook's Job gets no pod.**
+  With `global._hopsworks.mode: upgrade`, as under ArgoCD, the chart cannot see whether the service account of the hook exists.
+  Turning `consul.autoConfigureCoreDNS` on for an existing installation in that mode creates the Job before its service account: the Job gets no pod, its events say `error looking up service account hopsworks/consul-autoconfigcoredns-account: serviceaccount "consul-autoconfigcoredns-account" not found`, and the upgrade or sync fails on the hook after 4 minutes.
+  Helm reports `pre-upgrade hooks failed` with `job consul-coredns-pre-upgrade-<hash>-r<revision> failed: DeadlineExceeded`, and nothing else of the release has been applied at that point.
+  The Job carries the annotation `hopsworks.ai/no-pod` for this case.
+  Under ArgoCD, apply the service account, the two Roles and the two RoleBindings of the Job first, with the values of the application, then sync:
+
+    ```sh
+    helm template hopsworks hopsworks/hopsworks --version <version> --namespace hopsworks --values <values> \
+      --show-only charts/consul/templates/consul-autoconfigcoredns-ServiceAccount.yaml \
+      --show-only charts/consul/templates/consul-autoconfigcoredns-role.yaml \
+      --show-only charts/consul/templates/consul-autoconfigcoredns-rolebinding.yaml \
+      | kubectl apply -f -
+    ```
+
+  With Helm, run that upgrade without `global._hopsworks.mode`, so that it takes its default, `auto`: the chart then sees that the service account is missing and leaves the hook out.
+  Applying the objects by hand does not work with Helm, which refuses objects it did not create.
 
 ### ICEBERG feature groups in Trino { #upgrade-iceberg-trino }
 
@@ -316,6 +410,8 @@ What changes for users and operators ([details](kueue_external.md#what-changes))
 - A workload whose pods are not all ready 30 minutes after admission is evicted and queued again (Kueue 0.19 `waitForPodsReady`).
 - The Ray autoscaler and job-submitter sidecars count against quota (Kueue 0.19).
 - A workload without a priority class gets the WorkloadPriorityClass named `default`, when one exists (Kueue 0.20).
+- Disk limits need Kueue to leave `ephemeral-storage` out of its quota checks, which the upgrade script sets up.
+  It stops before changing the cluster when it cannot read the queues, or when disk is budgeted but some ClusterQueues do not cover it ([Disk limits][kueue-disk-limits]).
 
 ### Bring your own Kafka: Hopsworks creates and deletes topics { #upgrade-byok-topics }
 
@@ -368,7 +464,7 @@ Before, it created no topics there, so every topic had to exist before ingestion
 
 New in 5.3 and off by default: [Envoy Gateway][envoy-gateway] routes Standard-mode model deployments through the Kubernetes Gateway API, with Istio still the front door.
 
-- **Nothing moves unless you turn it on.**
+- **Nothing moves unless you enable it.**
   An upgrade that leaves `global._hopsworks.envoyGateway` alone routes every request as before.
 - **Two components restart during the upgrade.**
   The KServe controller restarts, and the running deployments keep serving meanwhile.
@@ -376,7 +472,7 @@ New in 5.3 and off by default: [Envoy Gateway][envoy-gateway] routes Standard-mo
   `model-serving-authenticator` restarts with a new listener for the Gateway.
   While its old pod is replaced, a few requests can get a 403, because the 5.2 pod stops without waiting for the new one; from 5.3 its restarts wait, so later ones lose no request.
 
-To turn it on in a cluster with running deployments, upgrade twice, so that the Gateway is up before any deployment moves.
+To enable it in a cluster with running deployments, upgrade twice, so that the Gateway is up before any deployment moves.
 Clients keep their endpoint, Knative-mode deployments stay on Istio, and no deployment restarts.
 
 1. **Prepare.**
@@ -432,6 +528,47 @@ Clients keep their endpoint, Knative-mode deployments stay on Istio, and no depl
 
     - Every Standard-mode deployment answers through the usual endpoint, with both URL shapes.
     - The Knative-mode deployments are unchanged.
+
+!!! warning "Headers with underscores"
+    Once a deployment has moved, the Gateway drops request headers whose names contain an underscore, such as `session_id`, which Istio passed on.
+    The request still succeeds, but a predictor or transformer script that reads such a header no longer receives it.
+    Send the value in a header whose name uses hyphens instead.
+
+### Search index rebuild { #upgrade-53-search-reindex }
+
+After the upgrade, the `post-upgrade-opensearch-reindex-job` hook indexes the existing data sources, which 5.3 adds to search, and datasets, which a cluster upgraded from 5.1 may lack, without emptying the index.
+No action is needed unless `hopsworks.opensearchReindex.enabled` is `false` or the hook's log reports a run already in progress: then request a reindex with `scope=ADDITIVE` through the [REST API][search-index-rebuild] once no run is in progress.
+
+### LLM Gateway { #upgrade-llm-gateway }
+
+The [LLM Gateway][llm-gateway] is new in 5.3 and off by default.
+On top of Envoy Gateway, `global._hopsworks.envoyGateway.aiGateway.enabled` gives every project one OpenAI-compatible endpoint, `<inference endpoint>/v1/<project>/v1/...`, for its Standard-mode vLLM deployments.
+It brings the LLM Gateway controller, its six CRDs and a dedicated AI Gateway, a Redis and Envoy Gateway's rate-limit service for the [rate limits][llm-gateway-rate-limits], an access log on the AI Gateway's Envoy, and Grafana dashboards.
+[Tracing][llm-gateway-tracing] has a switch of its own, `aiGateway.tracing.enabled`, also off by default.
+
+An upgrade that leaves `aiGateway` alone changes nothing: the Istio Lua filter is the same, no object is added, and the backend finds no `envoy-ai-gateway-config` ConfigMap and does nothing.
+Rendering fails when `aiGateway.enabled` is on and `envoyGateway.enabled` is off.
+
+Before enabling, as listed under [How to enable it][llm-gateway-enable]:
+
+- Stop the started deployments named `v1`, or recreate them under another name.
+  Once the feature is on, such a deployment answers `404` through the Istio ingress and is not served by the LLM Gateway; it keeps answering through the Envoy Gateway.
+- Check cert-manager, a network plugin that enforces NetworkPolicies, and the backend's grants in the release namespace.
+- On an airgapped cluster, mirror the four images.
+
+Enable with one `helm upgrade`: no predictive pod, Knative pod or `kserve-ingress-gateway` pod restarts, and the AI Gateway's Envoy pods roll once when the first route attaches.
+Data Owners can then turn the LLM Gateway off per project and per deployment, both on by default.
+Disable with one upgrade with `aiGateway.enabled: false`, as described under [Turn it off][llm-gateway-disable], which also lists what a `helm rollback` leaves behind and how to remove it.
+
+### Security response headers { #upgrade-security-headers }
+
+Hopsworks now sets [security response headers][security-headers] itself, including a Content-Security-Policy that the UI enforces.
+An upgrade needs no action.
+The policy allows what the Hopsworks UI loads from the Hopsworks origin only.
+If the UI calls model deployments on another host or port, or another site frames the UI, add that origin to `hopsworks.payara.securityHeaders.extraSources`, as described under [Model deployments on another host or port][security-headers-inference] and [Embedding Hopsworks in another site][security-headers-embedding].
+A page the policy breaks shows a `Content-Security-Policy` error in the browser console; set `cspMode: report-only` while [finding what it needs][security-headers-troubleshooting].
+
+Pages are no longer served from the browser's offline cache, so a page needs the cluster to be reachable.
 
 ## Changes from 5.2.2 { #upgrade-changes-from-522 }
 
