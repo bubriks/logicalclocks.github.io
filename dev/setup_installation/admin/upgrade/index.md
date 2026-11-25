@@ -263,7 +263,7 @@ An upgrade from a release that already uses Strimzi 1.3 crosses none of this.
   The setting makes that unlikely rather than impossible: nothing waits for the old operator to exit.
   If your values set `kafka.strimzi-kafka-operator.deploymentStrategy.type: Recreate`, also set `rollingUpdate: null` there, or the merged strategy is rejected.
   A single-broker cluster is unavailable while its broker is replaced, a single-controller cluster has no KRaft quorum while its controller is replaced, and OnlineFS catches up afterwards.
-- **Three new tags to mirror on an airgapped cluster**: `strimzi/operator`, `strimzi/kafka` and `strimzi/crds`, which `vendor_images.sh` lists.
+- **Three new tags to mirror on an airgapped cluster**: `strimzi/operator`, `strimzi/kafka` and `strimzi/crds`, which the [image list][private-registry-images] includes.
 - **The operator deletes pods with background propagation during a rolling update.**
   Strimzi 1.3 turns its `UseBackgroundPodDeletion` feature gate on by default, so that CNI plugins which remove a pod's network endpoints when its object is deleted, such as Cilium, no longer cut a broker off before it has shut down.
   To keep the earlier foreground deletion, set `kafka.strimzi-kafka-operator.featureGates: "-UseBackgroundPodDeletion"`.
@@ -816,8 +816,7 @@ On a cluster still on Istio 1.29, the Istio install hook stops with an error bef
   The Istio ingress gateway and the cluster-local gateway restart once.
   Each rolls out its new pod before it stops the old one.
 - **Your own image registry.**
-  Mirror `istio/pilot` and `istio/proxyv2` at `1.31.4` before the upgrade.
-  The chart's `vendor_images.sh` lists both.
+  Mirror `istio/pilot` and `istio/proxyv2` at `1.31.4` before the upgrade, as [Images to mirror][private-registry-images] describes.
 - **Sidecars you injected yourself.**
   The chart injects no Istio sidecar.
   A workload you gave an Istio sidecar keeps its 1.30 proxy until it restarts, so restart it after the upgrade.
@@ -827,6 +826,12 @@ On a cluster still on Istio 1.29, the Istio install hook stops with an error bef
   Do not run `helm upgrade`, or an ArgoCD sync, with a release older than 5.2.5 afterwards: its hook installs Istio 1.29 over 1.31, a downgrade Istio does not support.
   To go back entirely, restore the backup on a new cluster, as described in [New Cluster Restore][new-cluster-restore].
   An in-place restore does not apply here, since it runs `helm upgrade` with the release of the backup, whose Istio install hook then runs over Istio 1.31.
+
+### Storage initializer of model deployments { #upgrade-storage-initializer }
+
+The storage initializer, the init container that copies a downloading model deployment's files, now has limits of 2 cores and 2 GiB instead of 1 core and 1 GiB, because the copy was CPU-bound.
+A pod's limits count its largest init container, so a small predictor can now exceed a `limits.cpu` or `limits.memory` ResourceQuota or a LimitRange.
+Set `kserve.storageInitializer.resources` to keep the old limits.
 
 ## Changes from 5.2.2 { #upgrade-changes-from-522 }
 
@@ -892,7 +897,7 @@ They apply to an upgrade from 5.1.x to 5.2.3 or later, and from 5.2.0, 5.2.1 or 
 
 Python apps pull their Envoy sidecar from `global._hopsworks.imageRegistry`, as `<registry>/envoyproxy/envoy:<tag>` with the tag in `hopsworks.variables.python_app_envoy_image_version` (`v1.38.0`); before, the chart did not set the backend's `python_app_envoy_image`, so clusters pulled `envoyproxy/envoy:v1.38.0` from Docker Hub.
 The default registry, `docker.hops.works`, has the image.
-A cluster whose `global._hopsworks.imageRegistry` is its own registry mirrors `envoyproxy/envoy:v1.38.0` there, at the path `envoyproxy/envoy`, before the upgrade, or its Python apps cannot start; the chart's `vendor_images.sh` does not list the image.
+A cluster whose `global._hopsworks.imageRegistry` is its own registry mirrors `envoyproxy/envoy:v1.38.0` there, at the path `envoyproxy/envoy`, before the upgrade, or its Python apps cannot start.
 The chart now writes `python_app_envoy_image` on every upgrade, replacing a value set by hand, so a cluster that pointed it at another image mirrors that image as above.
 
 ## Changes from 5.2.5 { #upgrade-changes-from-525 }
@@ -911,8 +916,7 @@ Istio 1.30 supports Kubernetes 1.32 to 1.36, and Istio supports the 1.30 release
   The Istio ingress gateway and the cluster-local gateway restart once.
   Each rolls out its new pod before it stops the old one.
 - **Your own image registry.**
-  Mirror `istio/pilot` and `istio/proxyv2` at `1.30.8` before the upgrade.
-  The chart's `vendor_images.sh` lists both.
+  Mirror `istio/pilot` and `istio/proxyv2` at `1.30.8` before the upgrade, as [Images to mirror][private-registry-images] describes.
 - **Sidecars you injected yourself.**
   The chart injects no Istio sidecar.
   A workload you gave an Istio sidecar keeps its 1.29 proxy until it restarts, so restart it after the upgrade.
